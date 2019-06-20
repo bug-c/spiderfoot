@@ -1,3 +1,13 @@
+SpiderFoot
+==============
+
+[![Travis CI](https://img.shields.io/travis/bug-c/spiderfoot/master.svg)](https://travis-ci.org/bug-c/spiderfoot/branches) 
+[![Docker Pulls](https://img.shields.io/docker/pulls/ctdc/spiderfoot.svg)](https://hub.docker.com/r/ctdc/spiderfoot/) 
+[![Docker Stars](https://img.shields.io/docker/stars/ctdc/spiderfoot.svg)](https://hub.docker.com/r/ctdc/spiderfoot/) 
+[![](https://images.microbadger.com/badges/image/ctdc/spiderfoot.svg)](https://microbadger.com/images/ctdc/spiderfoot "Get your own image badge on microbadger.com")
+[![Docker Build](https://img.shields.io/docker/automated/ctdc/spiderfoot.svg)](https://cloud.docker.com/swarm/ctdc/repository/docker/ctdc/spiderfoot/builds)
+
+
 ABOUT
 ------
 
