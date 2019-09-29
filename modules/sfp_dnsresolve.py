@@ -13,9 +13,8 @@
 
 import socket
 import re
-import dns
 import urllib2
-from netaddr import IPAddress, IPNetwork
+from netaddr import IPNetwork
 from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
 
 class sfp_dnsresolve(SpiderFootPlugin):
@@ -112,7 +111,7 @@ class sfp_dnsresolve(SpiderFootPlugin):
                 "TARGET_WEB_CONTENT", "BASE64_DATA", "AFFILIATE_DOMAIN_WHOIS",
                 "CO_HOSTED_SITE_DOMAIN_WHOIS", "DOMAN_WHOIS", "NETBLOCK_WHOIS",
                 "LEAKSITE_CONTENT", "RAW_DNS_RECORDS", "RAW_FILE_META_DATA",
-                "SEARCH_ENGINE_WEB_CONTENT", "SIMILARDOMAIN_WHOIS",
+                "RAW_RIR_DATA", "SEARCH_ENGINE_WEB_CONTENT", "SIMILARDOMAIN_WHOIS",
                 "SSL_CERTIFICATE_RAW", "SSL_CERTIFICATE_ISSUED", "TCP_PORT_OPEN_BANNER",
                 "WEBSERVER_BANNER", "WEBSERVER_HTTPHEADERS"
                 ]
@@ -170,7 +169,7 @@ class sfp_dnsresolve(SpiderFootPlugin):
                     return None
                 pat = re.compile("(%..)?([a-zA-Z0-9\-\.]+\." + name + ")", re.IGNORECASE)
                 matches = re.findall(pat, data)
-                if matches is not None:
+                if matches:
                     for match in matches:
                         self.processHost(match[1], parentEvent, False)
             # Nothing left to do with internal links and raw data

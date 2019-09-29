@@ -11,7 +11,6 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import time
 import re
 from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
 
@@ -113,7 +112,7 @@ class sfp_zoneh(SpiderFootPlugin):
         if self.checkForStop():
             return None
 
-        url = "http://www.zone-h.org/rss/specialdefacements"
+        url = "https://www.zone-h.org/rss/specialdefacements"
         content = self.sf.cacheGet("sfzoneh", 48)
         if content is None:
             data = self.sf.fetchUrl(url, useragent=self.opts['_useragent'])

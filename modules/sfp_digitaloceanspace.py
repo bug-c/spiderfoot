@@ -22,7 +22,7 @@ class sfp_digitaloceanspace(SpiderFootPlugin):
     # Default options
     opts = {
         "endpoints": "nyc3.digitaloceanspaces.com,sgp1.digitaloceanspaces.com,ams3.digitaloceanspaces.com",
-        "suffixes": "test,dev,web,beta,bucket,space,files,content,data,-test,-dev,-web,-beta,-bucket,-space,-files,-content,-data",
+        "suffixes": "test,dev,web,beta,bucket,space,files,content,data,prod,staging,production,stage,app,media,development,-test,-dev,-web,-beta,-bucket,-space,-files,-content,-data,-prod,-staging,-production,-stage,-app,-media,-development",
         "_maxthreads": 20
     }
 
@@ -34,11 +34,13 @@ class sfp_digitaloceanspace(SpiderFootPlugin):
 
     results = None
     s3results = None
+    lock = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
         self.s3results = dict()
         self.results = dict()
+        self.lock = threading.Lock()
 
         for opt in userOpts.keys():
             self.opts[opt] = userOpts[opt]
@@ -54,16 +56,17 @@ class sfp_digitaloceanspace(SpiderFootPlugin):
         return ["CLOUD_STORAGE_BUCKET", "CLOUD_STORAGE_BUCKET_OPEN"]
 
     def checkSite(self, url):
-        res = self.sf.fetchUrl(url, timeout=10, useragent="SpiderFoot")
+        res = self.sf.fetchUrl(url, timeout=10, useragent="SpiderFoot", noLog=True)
 
         if res['code'] not in [ "301", "302", "200" ] and \
             (res['content'] is None or "NoSuchBucket" in res['content']):
             self.sf.debug("Not a valid bucket: " + url)
         else:
-            if "ListBucketResult" in res['content']:
-                self.s3results[url] = res['content'].count("<Key>")
-            else:
-                self.s3results[url] = 0
+            with self.lock:
+                if "ListBucketResult" in res['content']:
+                    self.s3results[url] = res['content'].count("<Key>")
+                else:
+                    self.s3results[url] = 0
 
     def threadSites(self, siteList):
         ret = list()

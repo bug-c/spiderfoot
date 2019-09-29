@@ -12,7 +12,6 @@
 
 import json
 import base64
-from datetime import datetime
 import re
 import time
 import socket
@@ -44,13 +43,13 @@ class sfp_circllu(SpiderFootPlugin):
     # Be sure to completely clear any class variables in setup()
     # or you run the risk of data persisting between scan runs.
 
-    results = dict()
+    results = None
     errorState = False
     cohostcount = 0
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.cohostcount = 0
 
         # Clear / reset any other class member variables here
@@ -127,11 +126,12 @@ class sfp_circllu(SpiderFootPlugin):
         if self.errorState:
             return None
 
+        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+
         # Ignore messages from myself
         if srcModuleName == "sfp_circllu":
+            self.sf.debug("Ignoring " + eventName + ", from self.")
             return None
-
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
 
         if self.opts['api_key_login'] == "" or self.opts['api_key_password'] == "":
             self.sf.error("You enabled sfp_circllu but did not set an credentials!", False)
@@ -218,7 +218,7 @@ class sfp_circllu(SpiderFootPlugin):
 
                 for co in cohosts:
                     if eventName == "IP_ADDRESS" and (self.opts['verify'] and not self.validateIP(co, eventData)):
-                        self.sf.debug("Host " + co + " no longer resolves to " + eventData)
+                        self.sf.debug("Host no longer resolves to our IP.")
                         continue
 
                     if not self.opts['cohostsamedomain']:

@@ -12,7 +12,6 @@
 # -------------------------------------------------------------------------------
 
 import json
-import socket
 from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
 
 class sfp_neutrinoapi(SpiderFootPlugin):
@@ -175,7 +174,7 @@ class sfp_neutrinoapi(SpiderFootPlugin):
                 self.sf.debug("No IP blocklist results found for " + eventData)
             else:
                 if data.get('is-listed'):
-                    evt = SpiderFootEvent("MALICIOUS_IPADDR", eventData, self.__name__, event)
+                    evt = SpiderFootEvent("MALICIOUS_IPADDR", "NeutrinoAPI [" + eventData + "]", self.__name__, event)
                     self.notifyListeners(evt)
                     evt = SpiderFootEvent("RAW_RIR_DATA", str(data), self.__name__, event)
                     self.notifyListeners(evt)
@@ -186,7 +185,7 @@ class sfp_neutrinoapi(SpiderFootPlugin):
                 self.sf.debug("No host reputation results found for " + eventData)
             else:
                 if data.get('is-listed'):
-                    evt = SpiderFootEvent("MALICIOUS_IPADDR", eventData, self.__name__, event)
+                    evt = SpiderFootEvent("MALICIOUS_IPADDR", "NeutrinoAPI [" + eventData + "]", self.__name__, event)
                     self.notifyListeners(evt)
                     evt = SpiderFootEvent("RAW_RIR_DATA", str(data), self.__name__, event)
                     self.notifyListeners(evt)

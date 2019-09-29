@@ -20,7 +20,7 @@ import argparse
 from copy import deepcopy
 
 # Look under ext ford 3rd party dependencies
-cmd_subfolder = os.path.realpath(os.path.abspath(os.path.join(os.path.split(inspect.getfile(inspect.currentframe()))[0], "ext")))
+cmd_subfolder = os.path.realpath(os.path.abspath(os.path.join(os.path.split(inspect.getfile(inspect.currentframe()))[0], "lib")))
 if cmd_subfolder not in sys.path:
     sys.path.insert(0, cmd_subfolder)
 
@@ -29,9 +29,9 @@ deps = ['M2Crypto', 'netaddr', 'dns', 'cherrypy', 'mako', 'socks', 'whois',
         'ipwhois']
 for mod in deps:
     try:
-        if mod.startswith("ext."):
+        if mod.startswith("lib."):
             modname = mod.split('.')
-            __import__('ext', fromlist=[modname[1]])
+            __import__('lib', fromlist=[modname[1]])
         else:
             __import__(mod)
     except ImportError as e:
@@ -46,8 +46,12 @@ for mod in deps:
         for mod in deps:
             print(" - " + mod)
         print("")
-        print("If you are running on Windows and getting this error, please")
-        print("report this as a bug to support@spiderfoot.net.")
+        print("****************************************************************")
+        print("Please note that if you are seeing this after doing a git pull")
+        print("then you just need to do a `pip install -r requirements.txt` as")
+        print("dependencies previously bundled with SpiderFoot are now")
+        print("unbundled.")
+        print("****************************************************************")
         print("")
         sys.exit(-1)
 
@@ -389,7 +393,8 @@ if __name__ == '__main__':
                 print("Incorrect format of passwd file, must be username:password on each line.")
                 sys.exit(-1)
 
-            u, p = line.strip().split(":")
+            u = line.strip().split(":")[0]
+            p = ':'.join(line.strip().split(":")[1:])
 
             if not u or not p:
                 print("Incorrect format of passwd file, must be username:password on each line.")
@@ -403,7 +408,7 @@ if __name__ == '__main__':
                 'tools.auth_digest.on': True,
                 'tools.auth_digest.realm': sfConfig['__webaddr'],
                 'tools.auth_digest.get_ha1': auth_digest.get_ha1_dict_plain(secrets),
-                'tools.auth_digest.key': random.randint(0, 99999999)
+                'tools.auth_digest.key': random.SystemRandom().randint(0, 99999999)
             }
         else:
             print("Warning: passwd file contains no passwords. Authentication disabled.")

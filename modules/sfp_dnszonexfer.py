@@ -10,12 +10,9 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import socket
 import re
 import dns.query
 import dns.zone
-import urllib2
-from netaddr import IPAddress, IPNetwork
 from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
 
 class sfp_dnszonexfer(SpiderFootPlugin):
@@ -62,6 +59,7 @@ class sfp_dnszonexfer(SpiderFootPlugin):
         self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
 
         if srcModuleName == "sfp_dnszonexfer":
+            self.sf.debug("Ignoring " + eventName + ", from self.")
             return None
 
         if eventDataHash in self.events:

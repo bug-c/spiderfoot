@@ -30,7 +30,8 @@ class sfp_xforce(SpiderFootPlugin):
         'maxnetblock': 24,
         'subnetlookup': True,
         'maxsubnet': 24,
-        'maxcohost': 100
+        'maxcohost': 100,
+        'checkaffiliates': True
     }
 
     # Option descriptions
@@ -42,19 +43,20 @@ class sfp_xforce(SpiderFootPlugin):
         'maxnetblock': "If looking up owned netblocks, the maximum netblock size to look up all IPs within (CIDR value, 24 = /24, 16 = /16, etc.)",
         'subnetlookup': "Look up all IPs on subnets which your target is a part of for blacklisting?",
         'maxsubnet': "If looking up subnets, the maximum subnet size to look up all the IPs within (CIDR value, 24 = /24, 16 = /16, etc.)",
-        'maxcohost': "Stop reporting co-hosted sites after this many are found, as it would likely indicate web hosting."
+        'maxcohost': "Stop reporting co-hosted sites after this many are found, as it would likely indicate web hosting.",
+        'checkaffiliates': "Apply checks to affiliates?"
     }
 
     # Be sure to completely clear any class variables in setup()
     # or you run the risk of data persisting between scan runs.
 
-    results = dict()
+    results = None
     errorState = False
     cohostcount = 0
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.cohostcount = 0
 
         # Clear / reset any other class member variables here
@@ -152,6 +154,9 @@ class sfp_xforce(SpiderFootPlugin):
                                   str(IPNetwork(eventData).prefixlen) + " > " +
                                   str(self.opts['maxsubnet']))
                     return None
+
+        if eventName.startswith('AFFILIATE_') and not self.opts.get('checkaffiliates', False):
+            return None
 
         qrylist = list()
         if eventName.startswith("NETBLOCK_"):

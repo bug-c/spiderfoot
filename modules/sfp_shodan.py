@@ -11,6 +11,7 @@
 # -------------------------------------------------------------------------------
 
 import json
+import urllib
 from netaddr import IPNetwork
 from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
 
@@ -54,7 +55,8 @@ class sfp_shodan(SpiderFootPlugin):
     def producedEvents(self):
         return ["OPERATING_SYSTEM", "DEVICE_TYPE",
                 "TCP_PORT_OPEN", "TCP_PORT_OPEN_BANNER",
-                "SEARCH_ENGINE_WEB_CONTENT" ]
+                "SEARCH_ENGINE_WEB_CONTENT", 'RAW_RIR_DATA',
+                'GEOINFO', 'VULNERABILITY']
 
     def query(self, qry):
         res = self.sf.fetchUrl("https://api.shodan.io/shodan/host/" + qry +
@@ -89,8 +91,12 @@ class sfp_shodan(SpiderFootPlugin):
         return info
 
     def searchHtml(self, qry):
-        res = self.sf.fetchUrl("https://api.shodan.io/shodan/host/search?query=http.html:" + qry +
-                               "&key=" + self.opts['api_key'],
+        params = {
+            'query': 'http.html:"' + qry.encode('raw_unicode_escape') + '"',
+            'key': self.opts['api_key']
+        }
+
+        res = self.sf.fetchUrl("https://api.shodan.io/shodan/host/search?" + urllib.urlencode(params),
                                timeout=self.opts['_fetchtimeout'], useragent="SpiderFoot")
         if res['content'] is None:
             self.sf.info("No SHODAN info found for " + qry)
@@ -144,6 +150,10 @@ class sfp_shodan(SpiderFootPlugin):
                               eventData + " (" + str(e) + ")", False)
                 return None
 
+            if network not in ['Google AdSense', 'Google Analytics', 'Google Site Verification']:
+                self.sf.debug("Skipping " + eventData + ", as not supported.")
+                return None
+
             rec = self.searchHtml(analytics_id)
 
             if rec is None:
@@ -194,6 +204,11 @@ class sfp_shodan(SpiderFootPlugin):
                                       " (" + addr + ")", self.__name__, event)
                 self.notifyListeners(evt)
 
+            if rec.get('country_name') is not None:
+                location = ', '.join(filter(None, [rec.get('city'), rec.get('country_name')]))
+                evt = SpiderFootEvent("GEOINFO", location, self.__name__, event)
+                self.notifyListeners(evt)
+
             if 'data' in rec:
                 self.sf.info("Found SHODAN data for " + eventData)
                 for r in rec['data']:
@@ -201,6 +216,7 @@ class sfp_shodan(SpiderFootPlugin):
                     banner = r.get('banner')
                     asn = r.get('asn')
                     product = r.get('product')
+                    vulns = r.get('vulns')
 
                     if port is not None:
                         # Notify other modules of what you've found
@@ -224,6 +240,12 @@ class sfp_shodan(SpiderFootPlugin):
                         evt = SpiderFootEvent("BGP_AS_MEMBER", asn.replace("AS", ""),
                                               self.__name__, event)
                         self.notifyListeners(evt)
+
+                    if vulns is not None:
+                        for vuln in vulns.keys():
+                            evt = SpiderFootEvent('VULNERABILITY', vuln,
+                                                  self.__name__, event)
+                            self.notifyListeners(evt)
 
         return None
 

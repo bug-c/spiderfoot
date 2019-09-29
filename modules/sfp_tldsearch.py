@@ -40,11 +40,13 @@ class sfp_tldsearch(SpiderFootPlugin):
 
     # Track TLD search results between threads
     tldResults = dict()
+    lock = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
         self.results = list()
         self.__dataSource__ = "DNS"
+        self.lock = threading.Lock()
 
         for opt in userOpts.keys():
             self.opts[opt] = userOpts[opt]
@@ -64,9 +66,11 @@ class sfp_tldsearch(SpiderFootPlugin):
             return None 
         try:
             addrs = socket.gethostbyname_ex(target)
-            self.tldResults[target] = True
+            with self.lock:
+                self.tldResults[target] = True
         except BaseException as e:
-            self.tldResults[target] = False
+            with self.lock:
+                self.tldResults[target] = False
 
     def tryTldWrapper(self, tldList, sourceEvent):
         self.tldResults = dict()
@@ -78,7 +82,7 @@ class sfp_tldsearch(SpiderFootPlugin):
         self.sf.info("Spawning threads to check TLDs: " + str(tldList))
         for pair in tldList:
             (domain, tld) = pair
-            tn = 'sfp_tldsearch_' + str(random.randint(0, 999999999))
+            tn = 'sfp_tldsearch_' + str(random.SystemRandom().randint(0, 999999999))
             t.append(threading.Thread(name=tn, target=self.tryTld, args=(domain, tld,)))
             t[i].start()
             i += 1

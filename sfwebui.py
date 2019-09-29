@@ -23,7 +23,7 @@ from mako.template import Template
 from sfdb import SpiderFootDb
 from sflib import SpiderFoot, globalScanStatus
 from sfscan import SpiderFootScanner
-from io import StringIO
+from io import BytesIO
 
 
 class SpiderFootWebUi:
@@ -122,7 +122,7 @@ class SpiderFootWebUi:
     def scaneventresultexport(self, id, type, dialect="excel"):
         dbh = SpiderFootDb(self.config)
         data = dbh.scanResultEvent(id, type)
-        fileobj = StringIO()
+        fileobj = BytesIO()
         parser = csv.writer(fileobj, dialect=dialect)
         parser.writerow(["Updated", "Type", "Module", "Source", "F/P", "Data"])
         for row in data:
@@ -147,7 +147,7 @@ class SpiderFootWebUi:
             scaninfo[id] = dbh.scanInstanceGet(id)
             data = data + dbh.scanResultEvent(id)
 
-        fileobj = StringIO()
+        fileobj = BytesIO()
         parser = csv.writer(fileobj, dialect=dialect)
         parser.writerow(["Scan Name", "Updated", "Type", "Module", "Source", "F/P", "Data"])
         for row in data:
@@ -167,7 +167,7 @@ class SpiderFootWebUi:
     # Get search result data in CSV format
     def scansearchresultexport(self, id, eventType=None, value=None, dialect="excel"):
         data = self.searchBase(id, eventType, value)
-        fileobj = StringIO()
+        fileobj = BytesIO()
         parser = csv.writer(fileobj, dialect=dialect)
         parser.writerow(["Updated", "Type", "Module", "Source", "F/P", "Data"])
         for row in data:
@@ -188,7 +188,12 @@ class SpiderFootWebUi:
         scaninfo = dict()
 
         for id in ids.split(','):
-          scan_name = dbh.scanInstanceGet(id)[0]
+          scan = dbh.scanInstanceGet(id)
+
+          if scan is None:
+              continue
+
+          scan_name = scan[0]
 
           if scan_name not in scaninfo:
               scaninfo[scan_name] = []
@@ -453,7 +458,7 @@ class SpiderFootWebUi:
     # Settings
     def opts(self):
         templ = Template(filename='dyn/opts.tmpl', lookup=self.lookup)
-        self.token = random.randint(0, 99999999)
+        self.token = random.SystemRandom().randint(0, 99999999)
         return templ.render(opts=self.config, pageid='SETTINGS', token=self.token, docroot=self.docroot)
 
     opts.exposed = True
@@ -480,7 +485,7 @@ class SpiderFootWebUi:
     # Settings
     def optsraw(self):
         ret = dict()
-        self.token = random.randint(0, 99999999)
+        self.token = random.SystemRandom().randint(0, 99999999)
         for opt in self.config:
             if opt.startswith('__'):
                 if opt == '__modules__':
@@ -513,7 +518,7 @@ class SpiderFootWebUi:
         if confirm is not None:
             dbh.scanInstanceDelete(id)
             if not raw:
-                raise cherrypy.HTTPRedirect("/")
+                raise cherrypy.HTTPRedirect(self.docroot)
             else:
                 return json.dumps(["SUCCESS", ""])
         else:
@@ -541,7 +546,7 @@ class SpiderFootWebUi:
         if confirm is not None:
             for id in ids.split(','):
                 dbh.scanInstanceDelete(id)
-            raise cherrypy.HTTPRedirect("/")
+            raise cherrypy.HTTPRedirect(self.docroot)
         else:
             templ = Template(filename='dyn/scandelete.tmpl', lookup=self.lookup)
             return templ.render(id=None, name=None, ids=ids.split(','), names=names, 
@@ -593,7 +598,7 @@ class SpiderFootWebUi:
             return self.error("Processing one or more of your inputs failed: " + str(e))
 
         templ = Template(filename='dyn/opts.tmpl', lookup=self.lookup)
-        self.token = random.randint(0, 99999999)
+        self.token = random.SystemRandom().randint(0, 99999999)
         return templ.render(opts=self.config, pageid='SETTINGS', updated=True,
                             docroot=self.docroot, token=self.token)
 

@@ -11,14 +11,10 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import socket
-import re
 import dns
 import random
 import threading
-import urllib2
 import time
-from netaddr import IPAddress, IPNetwork
 from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
 
 class sfp_dnsbrute(SpiderFootPlugin):
@@ -50,6 +46,7 @@ class sfp_dnsbrute(SpiderFootPlugin):
     events = dict()
     resolveCache = dict()
     sublist = dict()
+    lock = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
@@ -57,13 +54,14 @@ class sfp_dnsbrute(SpiderFootPlugin):
         self.events = dict()
         self.resolveCache = dict()
         self.__dataSource__ = "DNS"
+        self.lock = threading.Lock()
 
         for opt in userOpts.keys():
             self.opts[opt] = userOpts[opt]
 
         cslines = list()
         if self.opts['commons']:
-            cs = open(self.sf.myPath() + "/ext/subdomains.txt", 'r')
+            cs = open(self.sf.myPath() + "/dicts/subdomains.txt", 'r')
             cslines = cs.readlines()
             for s in cslines:
                 s = s.strip()
@@ -71,7 +69,7 @@ class sfp_dnsbrute(SpiderFootPlugin):
 
         ttlines = list()
         if self.opts['top10000']:
-            tt = open(self.sf.myPath() + "/ext/subdomains-10000.txt", 'r')
+            tt = open(self.sf.myPath() + "/dicts/subdomains-10000.txt", 'r')
             ttlines = tt.readlines()
             for s in ttlines:
                 s = s.strip()
@@ -104,9 +102,11 @@ class sfp_dnsbrute(SpiderFootPlugin):
                 name = name.encode("idna")
 
             addrs = resolver.query(name)
-            self.hostResults[name] = True
+            with self.lock:
+                self.hostResults[name] = True
         except BaseException as e:
-            self.hostResults[name] = False
+            with self.lock:
+                self.hostResults[name] = False
 
     def tryHostWrapper(self, hostList, sourceEvent):
         self.hostResults = dict()
@@ -117,7 +117,7 @@ class sfp_dnsbrute(SpiderFootPlugin):
         # Spawn threads for scanning
         self.sf.info("Spawning threads to check hosts: " + str(hostList))
         for name in hostList:
-            tn = 'sfp_dnsbrute_' + str(random.randint(0, 999999999))
+            tn = 'sfp_dnsbrute_' + str(random.SystemRandom().randint(0, 999999999))
             t.append(threading.Thread(name=tn, target=self.tryHost, args=(name,)))
             t[i].start()
             i += 1

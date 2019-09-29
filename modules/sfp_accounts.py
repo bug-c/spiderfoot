@@ -28,6 +28,7 @@ class sfp_accounts(SpiderFootPlugin):
         "ignorenamedict": True,
         "ignoreworddict": True,
         "musthavename": True,
+        "userfromemail": True,
         "_maxthreads": 25
     }
 
@@ -36,24 +37,27 @@ class sfp_accounts(SpiderFootPlugin):
         "generic": "Generic internal accounts to not bother looking up externally.",
         "ignorenamedict": "Don't bother looking up names that are just stand-alone first names (too many false positives).",
         "ignoreworddict": "Don't bother looking up names that appear in the dictionary.",
-        "musthavename": "The username must be mentioned on the social media page to consider it valid (helps avoid false positives)."
+        "musthavename": "The username must be mentioned on the social media page to consider it valid (helps avoid false positives).",
+        "userfromemail": "Extract usernames from e-mail addresses at all? If disabled this can reduce false positives for common usernames but for highly unique usernames it would result in missed accounts."
     }
 
-    results = dict()
+    results = None
     reportedUsers = list()
     siteResults = dict()
     sites = list()
     errorState = False
     distrustedChecked = False
+    lock = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.commonNames = list()
         self.reportedUsers = list()
         self.errorState = False
         self.distrustedChecked = False
         self.__dataSource__ = "Social Media"
+        self.lock = threading.Lock()
 
         for opt in userOpts.keys():
             self.opts[opt] = userOpts[opt]
@@ -98,11 +102,13 @@ class sfp_accounts(SpiderFootPlugin):
                                useragent=self.opts['_useragent'], noLog=True)
 
         if not res['content']:
-            self.siteResults[retname] = False
+            with self.lock:
+                self.siteResults[retname] = False
             return
 
         if res['code'].startswith("4") or res['code'].startswith("5"):
-            self.siteResults[retname] = False
+            with self.lock:
+                self.siteResults[retname] = False
             return
 
         try:
@@ -135,7 +141,8 @@ class sfp_accounts(SpiderFootPlugin):
             if firstname + "<" in res['content'] or firstname + '"' in res['content']:
                 found = False
 
-        self.siteResults[retname] = found
+        with self.lock:
+            self.siteResults[retname] = found
 
     def threadSites(self, name, siteList):
         ret = list()
@@ -219,7 +226,7 @@ class sfp_accounts(SpiderFootPlugin):
         # sites are by attempting to fetch a garbage user.
         if not self.distrustedChecked:
             randpool = 'abcdefghijklmnopqrstuvwxyz1234567890'
-            randuser = ''.join([random.choice(randpool) for x in range(10)])
+            randuser = ''.join([random.SystemRandom().choice(randpool) for x in range(10)])
             res = self.batchSites(randuser)
             if len(res) > 0:
                 delsites = list()
@@ -263,6 +270,9 @@ class sfp_accounts(SpiderFootPlugin):
 
             if self.opts['ignoreworddict'] and name in self.words:
                 self.sf.debug(name + " is found in our word dictionary, skipping.")
+                adduser = False
+
+            if eventName == "EMAILADDR" and not self.opts['userfromemail']:
                 adduser = False
 
             if adduser:

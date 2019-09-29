@@ -22,7 +22,7 @@ class sfp_s3bucket(SpiderFootPlugin):
     # Default options
     opts = {
         "endpoints": "s3.amazonaws.com,s3-external-1.amazonaws.com,s3-us-west-1.amazonaws.com,s3-us-west-2.amazonaws.com,s3.ap-south-1.amazonaws.com,s3-ap-south-1.amazonaws.com,s3.ap-northeast-2.amazonaws.com,s3-ap-northeast-2.amazonaws.com,s3-ap-southeast-1.amazonaws.com,s3-ap-southeast-2.amazonaws.com,s3-ap-northeast-1.amazonaws.com,s3.eu-central-1.amazonaws.com,s3-eu-central-1.amazonaws.com,s3-eu-west-1.amazonaws.com,s3-sa-east-1.amazonaws.com",
-        "suffixes": "test,dev,web,beta,bucket,space,files,content,data,-test,-dev,-web,-beta,-bucket,-space,-files,-content,-data",
+        "suffixes": "test,dev,web,beta,bucket,space,files,content,data,prod,staging,production,stage,app,media,development,-test,-dev,-web,-beta,-bucket,-space,-files,-content,-data,-prod,-staging,-production,-stage,-app,-media,-development",
         "_maxthreads": 20
     }
 
@@ -34,11 +34,13 @@ class sfp_s3bucket(SpiderFootPlugin):
 
     results = list()
     s3results = dict()
+    lock = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
         self.s3results = dict()
         self.results = list()
+        self.lock = threading.Lock()
 
         for opt in userOpts.keys():
             self.opts[opt] = userOpts[opt]
@@ -62,9 +64,11 @@ class sfp_s3bucket(SpiderFootPlugin):
             return None
         else:
             if "ListBucketResult" in res['content']:
-                self.s3results[url] = res['content'].count("<Key>")
+                with self.lock:
+                    self.s3results[url] = res['content'].count("<Key>")
             else:
-                self.s3results[url] = 0
+                with self.lock:
+                    self.s3results[url] = 0
 
     def threadSites(self, siteList):
         ret = list()
@@ -87,7 +91,7 @@ class sfp_s3bucket(SpiderFootPlugin):
         while running:
             found = False
             for rt in threading.enumerate():
-                if rt.name.startswith("sfp_s3buckeets_"):
+                if rt.name.startswith("sfp_s3buckets_"):
                     found = True
 
             if not found:
