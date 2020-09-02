@@ -10,13 +10,37 @@
 #-------------------------------------------------------------------------------
 
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_slideshare(SpiderFootPlugin):
-    """SlideShare:Footprint,Investigate,Passive:Social Media::Gather name and location from SlideShare profiles."""
+
+    meta = {
+        'name': "SlideShare",
+        'summary': "Gather name and location from SlideShare profiles.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Social Media"],
+        'dataSource': {
+            'website': "https://www.slideshare.net",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://www.slideshare.net/developers/documentation",
+                "https://www.slideshare.net/developers",
+                "https://www.slideshare.net/developers/resources",
+                "https://www.slideshare.net/developers/oembed"
+            ],
+            'favIcon': "https://public.slidesharecdn.com/favicon.ico?d8e2a4ed15",
+            'logo': "https://public.slidesharecdn.com/images/logo/linkedin-ss/SS_Logo_White_Large.png?6d1f7a78a6",
+            'description': "LinkedIn SlideShare is an American hosting service for professional content including "
+                                "presentations, infographics, documents, and videos. "
+                                "Users can upload files privately or publicly in PowerPoint, Word, PDF, or OpenDocument format.",
+        }
+    }
 
     # Default options
-    opts = { 
+    opts = {
     }
 
     # Option descriptions
@@ -25,23 +49,22 @@ class sfp_slideshare(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.__dataSource__ = "SlideShare"
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return [ "SOCIAL_MEDIA" ]
+        return ["SOCIAL_MEDIA"]
 
     # What events this module produces
     def producedEvents(self):
-        return [ "RAW_RIR_DATA", "GEOINFO" ]
+        return ["RAW_RIR_DATA", "GEOINFO"]
 
     # Extract meta property contents from HTML
     def extractMeta(self, meta_property, html):
-        return re.findall(r'<meta property="' + meta_property + '"\s+content="(.+)" />', html)
+        return re.findall(r'<meta property="' + meta_property + r'"\s+content="(.+)" />', html)
 
     # Handle events sent to this module
     def handleEvent(self, event):
@@ -54,12 +77,12 @@ class sfp_slideshare(SpiderFootPlugin):
         else:
             self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Retrieve profile
         try:
             network = eventData.split(": ")[0]
-            url = eventData.split(": ")[1]
+            url = eventData.split(": ")[1].replace("<SFURL>", "").replace("</SFURL>", "")
         except BaseException as e:
             self.sf.error("Unable to parse SOCIAL_MEDIA: " +
                           eventData + " (" + str(e) + ")", False)
@@ -70,7 +93,7 @@ class sfp_slideshare(SpiderFootPlugin):
                           ", as not a SlideShare profile")
             return None
 
-        res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'], 
+        res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'],
                                useragent=self.opts['_useragent'])
 
         if res['content'] is None:

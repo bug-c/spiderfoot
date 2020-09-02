@@ -11,14 +11,34 @@
 
 import json
 import time
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_haveibeenpwned(SpiderFootPlugin):
-    """HaveIBeenPwned:Footprint,Investigate,Passive:Leaks, Dumps and Breaches:apikey:Check HaveIBeenPwned.com for hacked e-mail addresses identified in breaches."""
 
+    meta = {
+        'name': "HaveIBeenPwned",
+        'summary': "Check HaveIBeenPwned.com for hacked e-mail addresses identified in breaches.",
+        'flags': ["apikey"],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Leaks, Dumps and Breaches"],
+        'dataSource': {
+            'website': "https://haveibeenpwned.com/",
+            'model': "COMMERCIAL_ONLY",
+            'references': [
+                "https://haveibeenpwned.com/API/v3",
+                "https://haveibeenpwned.com/FAQs"
+            ],
+            'apiKeyInstructions': [],
+            'favIcon': "https://haveibeenpwned.com/favicon.ico",
+            'logo': "https://haveibeenpwned.com/favicon.ico",
+            'description': "Check if you have an account that has been compromised in a data breach.",
+        }
+    }
 
     # Default options
-    opts = { 
+    opts = {
         "api_key": ""
     }
 
@@ -41,7 +61,7 @@ class sfp_haveibeenpwned(SpiderFootPlugin):
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -55,21 +75,21 @@ class sfp_haveibeenpwned(SpiderFootPlugin):
     def query(self, qry):
         ret = None
         if self.opts['api_key']:
-            v = "3"
+            version = "3"
         else:
-            v = "2"
+            version = "2"
 
-        url = "https://haveibeenpwned.com/api/v" + v + "/breachedaccount/" + qry
-        hdrs = { "Accept": "application/vnd.haveibeenpwned.v" + v + "+json" }
+        url = f"https://haveibeenpwned.com/api/v{version}/breachedaccount/{qry}"
+        hdrs = {"Accept": f"application/vnd.haveibeenpwned.v{version}+json"}
         retry = 0
 
         if self.opts['api_key']:
             hdrs['hibp-api-key'] = self.opts['api_key']
-            
+
         while retry < 2:
             # https://haveibeenpwned.com/API/v2#RateLimiting
             time.sleep(1.5)
-            res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'], 
+            res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'],
                                    useragent="SpiderFoot", headers=hdrs)
 
             if res['code'] == "200":
@@ -91,7 +111,7 @@ class sfp_haveibeenpwned(SpiderFootPlugin):
         try:
             ret = json.loads(res['content'])
         except Exception as e:
-            self.sf.error("Error processing JSON response from HaveIBeenPwned?: " + str(e), False)
+            self.sf.error(f"Error processing JSON response from HaveIBeenPwned?: {e}", False)
             return None
 
         return ret
@@ -105,24 +125,29 @@ class sfp_haveibeenpwned(SpiderFootPlugin):
         if self.errorState:
             return None
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
-       # Don't look up stuff twice
+        # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
         else:
             self.results[eventData] = True
 
         data = self.query(eventData)
-        if data == None:
+        if data is None:
             return None
 
         for n in data:
-            if not self.opts['api_key']:
-                site = n["Title"]
-            else:
-                site = n["Name"]
+            try:
+                if not self.opts['api_key']:
+                    site = n["Title"]
+                else:
+                    site = n["Name"]
+            except BaseException as e:
+                self.sf.debug(f"Unable to parse result from HaveIBeenPwned?: {e}")
+                continue
+
             evt = eventName + "_COMPROMISED"
             # Notify other modules of what you've found
             e = SpiderFootEvent(evt, eventData + " [" + site + "]",

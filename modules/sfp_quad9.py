@@ -11,13 +11,36 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import socket
 import dns.resolver
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_quad9(SpiderFootPlugin):
-    """Quad9:Investigate,Passive:Reputation Systems::Check if a host would be blocked by Quad9"""
+
+    meta = {
+        'name': "Quad9",
+        'summary': "Check if a host would be blocked by Quad9",
+        'flags': [""],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://quad9.net/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://www.quad9.net/faq/",
+                "https://www.quad9.net/#Setup_Quad9"
+            ],
+            'favIcon': "https://quad9.net/wp-content/uploads/2018/01/favicon-32.png",
+            'logo': "https://quad9.net/wp-content/uploads/2017/11/quad9-logo-white@2x.png",
+            'description': "Quad9 brings together cyber threat intelligence about malicious domains "
+                                "from a variety of public and private sources and blocks access "
+                                "to those malicious domains when your system attempts to contact them.\n"
+                                "When you use Quad9, attackers and malware cannot leverage the known malicious domains to control your systems, "
+                                "and their ability to steal your data or cause harm will be hindered. "
+                                "Quad9 is an effective and easy way to add an additional layer of security to your infrastructure for free.",
+        }
+    }
 
     # Default options
     opts = {
@@ -27,13 +50,13 @@ class sfp_quad9(SpiderFootPlugin):
     optdescs = {
     }
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -49,13 +72,13 @@ class sfp_quad9(SpiderFootPlugin):
 
     def queryAddr(self, qaddr):
         res = dns.resolver.Resolver()
-        res.nameservers = [ "9.9.9.9" ]
+        res.nameservers = ["9.9.9.9"]
 
         try:
             addrs = res.query(qaddr)
             self.sf.debug("Addresses returned: " + str(addrs))
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + qaddr)
+        except BaseException:
+            self.sf.debug(f"Unable to resolve {qaddr}")
             return False
 
         if addrs:
@@ -70,7 +93,7 @@ class sfp_quad9(SpiderFootPlugin):
         parentEvent = event
         resolved = False
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
             return None
@@ -79,9 +102,9 @@ class sfp_quad9(SpiderFootPlugin):
         # Check that it resolves first, as it becomes a valid
         # malicious host only if NOT resolved by Quad9.
         try:
-            if self.sf.normalizeDNS(socket.gethostbyname_ex(eventData)):
+            if self.sf.resolveHost(eventData):
                 resolved = True
-        except BaseException as e:
+        except BaseException:
             return None
 
         if resolved:
@@ -91,7 +114,7 @@ class sfp_quad9(SpiderFootPlugin):
                 typ = "MALICIOUS_COHOST"
             if not found:
                 evt = SpiderFootEvent(typ, "Blocked by Quad9 [" + eventData + "]\n" +\
-                                      "<SFURL>https://quad9.net/result/?url=" + eventData + "</SFURL>", 
+                                      "<SFURL>https://quad9.net/result/?url=" + eventData + "</SFURL>",
                                       self.__name__, parentEvent)
                 self.notifyListeners(evt)
 

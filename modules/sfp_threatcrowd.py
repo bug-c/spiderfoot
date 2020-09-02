@@ -11,13 +11,33 @@
 # -------------------------------------------------------------------------------
 
 import json
+
 from netaddr import IPNetwork
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_threatcrowd(SpiderFootPlugin):
-    """ThreatCrowd:Investigate,Passive:Reputation Systems::Obtain information from ThreatCrowd about identified IP addresses, domains and e-mail addresses."""
 
+    meta = {
+        'name': "ThreatCrowd",
+        'summary': "Obtain information from ThreatCrowd about identified IP addresses, domains and e-mail addresses.",
+        'flags': [""],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://www.threatcrowd.org",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://threatcrowd.blogspot.com/2015/03/tutorial.html"
+            ],
+            'favIcon': "https://www.threatcrowd.org/img/favicon-32x32.png",
+            'logo': "https://www.threatcrowd.org/img/home.png",
+            'description': "The ThreatCrowd API allows you to quickly identify related infrastructure and malware.\n"
+                                "With the ThreatCrowd API you can search for Domains, IP Addreses, E-mail adddresses, "
+                                "Filehashes, Antivirus detections.",
+        }
+    }
 
     # Default options
     opts = {
@@ -42,18 +62,18 @@ class sfp_threatcrowd(SpiderFootPlugin):
     # Be sure to completely clear any class variables in setup()
     # or you run the risk of data persisting between scan runs.
 
-    results = dict()
+    results = None
     errorState = False
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.errorState = False
 
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -67,8 +87,7 @@ class sfp_threatcrowd(SpiderFootPlugin):
         return ["MALICIOUS_IPADDR", "MALICIOUS_INTERNET_NAME",
                 "MALICIOUS_COHOST", "MALICIOUS_AFFILIATE_INTERNET_NAME",
                 "MALICIOUS_AFFILIATE_IPADDR", "MALICIOUS_NETBLOCK",
-                "MALICIOUS_SUBNET", "INTERNET_NAME",
-                "MALICIOUS_EMAILADDR"]
+                "MALICIOUS_SUBNET", "MALICIOUS_EMAILADDR"]
 
     def query(self, qry):
         ret = None
@@ -76,10 +95,10 @@ class sfp_threatcrowd(SpiderFootPlugin):
 
         if self.sf.validIP(qry):
             url = "https://www.threatcrowd.org/searchApi/v2/ip/report/?ip=" + qry
-        
+
         if "@" in qry:
             url = "https://www.threatcrowd.org/searchApi/v2/email/report/?email=" + qry
-        
+
         if not url:
             url = "https://www.threatcrowd.org/searchApi/v2/domain/report/?domain=" + qry
 
@@ -92,7 +111,7 @@ class sfp_threatcrowd(SpiderFootPlugin):
         try:
             ret = json.loads(res['content'])
         except Exception as e:
-            self.sf.error("Error processing JSON response from ThreatCrowd.", False)
+            self.sf.error(f"Error processing JSON response from ThreatCrowd: {e}", False)
             self.errorState = True
             return None
 
@@ -107,11 +126,11 @@ class sfp_threatcrowd(SpiderFootPlugin):
         if self.errorState:
             return None
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
         else:
             self.results[eventData] = True
@@ -127,9 +146,9 @@ class sfp_threatcrowd(SpiderFootPlugin):
                 return None
             else:
                 if IPNetwork(eventData).prefixlen < self.opts['maxnetblock']:
-                    self.sf.debug("Network size bigger than permitted: " +
-                                  str(IPNetwork(eventData).prefixlen) + " > " +
-                                  str(self.opts['maxnetblock']))
+                    self.sf.debug("Network size bigger than permitted: "
+                                  + str(IPNetwork(eventData).prefixlen) + " > "
+                                  + str(self.opts['maxnetblock']))
                     return None
 
         if eventName == 'NETBLOCK_MEMBER':
@@ -137,9 +156,9 @@ class sfp_threatcrowd(SpiderFootPlugin):
                 return None
             else:
                 if IPNetwork(eventData).prefixlen < self.opts['maxsubnet']:
-                    self.sf.debug("Network size bigger than permitted: " +
-                                  str(IPNetwork(eventData).prefixlen) + " > " +
-                                  str(self.opts['maxsubnet']))
+                    self.sf.debug("Network size bigger than permitted: "
+                                  + str(IPNetwork(eventData).prefixlen) + " > "
+                                  + str(self.opts['maxsubnet']))
                     return None
 
         qrylist = list()
@@ -180,8 +199,7 @@ class sfp_threatcrowd(SpiderFootPlugin):
                 infourl = "<SFURL>" + info.get('permalink') + "</SFURL>"
 
                 # Notify other modules of what you've found
-                e = SpiderFootEvent(evt, "ThreatCrowd [" + addr + "]\n" +
-                                    infourl, self.__name__, event)
+                e = SpiderFootEvent(evt, "ThreatCrowd [" + addr + "]\n" + infourl, self.__name__, event)
                 self.notifyListeners(e)
 
 # End of sfp_threatcrowd class

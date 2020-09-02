@@ -11,12 +11,40 @@
 #-------------------------------------------------------------------------------
 
 import json
-import urllib
 import time
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_whatcms(SpiderFootPlugin):
-    """WhatCMS:Footprint,Investigate:Content Analysis:apikey,slow:Check web technology using WhatCMS.org API."""
+
+    meta = {
+        'name': "WhatCMS",
+        'summary': "Check web technology using WhatCMS.org API.",
+        'flags': ["apikey", "slow"],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Content Analysis"],
+        'dataSource': {
+            'website': "https://whatcms.org/",
+            'model': "FREE_AUTH_LIMITED",
+            'references': [
+                "https://whatcms.org/API",
+                "https://whatcms.org/Documentation"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://whatcms.org/API",
+                "Register a free account",
+                "Navigate to https://whatcms.org/APIKey",
+                "The API key is listed under 'Your API Key'"
+            ],
+            'favIcon': "https://whatcms.org/themes/what_bootstrap4/favicon.ico",
+            'logo': "https://whatcms.org/themes/what_bootstrap4/favicon.ico",
+            'description': "Detect what CMS a site is using.",
+        }
+    }
 
     # Default options
     opts = {
@@ -38,16 +66,15 @@ class sfp_whatcms(SpiderFootPlugin):
         'delay': 'Delay between requests, in seconds.'
     }
 
-    results = dict()
+    results = None
     errorState = False
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.__dataSource__ = 'WhatCMS'
-        self.results = dict()
+        self.results = self.tempStorage()
         self.errorState = False
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -62,11 +89,11 @@ class sfp_whatcms(SpiderFootPlugin):
     # https://whatcms.org/Documentation
     def queryCmsDetect(self, qry):
         params = {
-            'url': qry,
+            'url': qry.encode('raw_unicode_escape').decode("ascii", errors='replace'),
             'key': self.opts['api_key']
         }
 
-        res = self.sf.fetchUrl('https://whatcms.org/APIEndpoint/Detect?' + urllib.urlencode(params),
+        res = self.sf.fetchUrl('https://whatcms.org/APIEndpoint/Detect?' + urllib.parse.urlencode(params),
                                timeout=self.opts['timeout'],
                                useragent=self.opts['_useragent'])
 
@@ -78,11 +105,11 @@ class sfp_whatcms(SpiderFootPlugin):
     # https://whatcms.org/Documentation
     def queryCmsTechnology(self, qry):
         params = {
-            'url': qry,
+            'url': qry.encode('raw_unicode_escape').decode("ascii", errors='replace'),
             'key': self.opts['api_key']
         }
 
-        res = self.sf.fetchUrl('https://whatcms.org/APIEndpoint/Technology?' + urllib.urlencode(params),
+        res = self.sf.fetchUrl('https://whatcms.org/APIEndpoint/Technology?' + urllib.parse.urlencode(params),
                                timeout=self.opts['timeout'],
                                useragent=self.opts['_useragent'])
 
@@ -104,7 +131,7 @@ class sfp_whatcms(SpiderFootPlugin):
         try:
             data = json.loads(res['content'])
         except BaseException as e:
-            self.sf.debug('Error processing JSON response: ' + str(e))
+            self.sf.debug(f"Error processing JSON response: {e}")
             return None
 
         result = data.get('result')
@@ -180,7 +207,7 @@ class sfp_whatcms(SpiderFootPlugin):
 
         self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         data = self.queryCmsTechnology(eventData)
 
@@ -199,7 +226,7 @@ class sfp_whatcms(SpiderFootPlugin):
 
         for result in results:
             if result.get('name'):
-                software = ' '.join(filter(None, [result.get('name'), result.get('version')]))
+                software = ' '.join([_f for _f in [result.get('name'), result.get('version')] if _f])
                 evt = SpiderFootEvent('WEBSERVER_TECHNOLOGY', software, self.__name__, event)
                 self.notifyListeners(evt)
             else:

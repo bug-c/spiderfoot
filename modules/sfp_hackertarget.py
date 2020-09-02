@@ -14,14 +14,36 @@
 
 import json
 import re
-import socket
+
 from netaddr import IPNetwork
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_hackertarget(SpiderFootPlugin):
-    """HackerTarget.com:Footprint,Investigate,Passive:Passive DNS::Search HackerTarget.com for hosts sharing the same IP."""
 
+    meta = {
+        'name': "HackerTarget",
+        'summary': "Search HackerTarget.com for hosts sharing the same IP.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Passive DNS"],
+        'dataSource': {
+            'website': "https://hackertarget.com/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://hackertarget.com/research/",
+                "https://hackertarget.com/category/tools/"
+            ],
+            'favIcon': "https://www.google.com/s2/favicons?domain=https://hackertarget.com/",
+            'logo': "https://hackertarget.com/wp-content/uploads/2018/03/online-security.png",
+            'description': "Simplify the security assessment process with hosted vulnerability scanners. "
+                                "From attack surface discovery to vulnerability identification, "
+                                "actionable network intelligence for IT & security operations. "
+                                "Proactively hunt for security weakness. "
+                                "Pivot from attack surface discovery to vulnerability identification.",
+        }
+    }
 
     # Default options
     opts = {
@@ -47,15 +69,15 @@ class sfp_hackertarget(SpiderFootPlugin):
         'udp_portscan': "Scan IP for commonly open UDP ports using HackerTarget.com UDP port scan."
     }
 
-    results = dict()
+    results = None
     cohostcount = 0
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.cohostcount = 0
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -67,44 +89,10 @@ class sfp_hackertarget(SpiderFootPlugin):
     # produced.
     def producedEvents(self):
         return ["CO_HOSTED_SITE", "UDP_PORT_OPEN", "TCP_PORT_OPEN", "IP_ADDRESS",
-                'WEBSERVER_HTTPHEADERS', 'DOMAIN_NAME', 'RAW_DNS_RECORDS',
+                'WEBSERVER_HTTPHEADERS', 'RAW_DNS_RECORDS',
                 'INTERNET_NAME', 'INTERNET_NAME_UNRESOLVED',
-                'AFFILIATE_DOMAIN', 'AFFILIATE_DOMAIN_UNRESOLVED']
-
-    def validateIP(self, host, ip):
-        try:
-            addrs = socket.gethostbyname_ex(host)
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + host + ": " + str(e))
-            return False
-
-        for addr in addrs:
-            if type(addr) == list:
-                for a in addr:
-                    if str(a) == ip:
-                        return True
-            else:
-                if str(addr) == ip:
-                    return True
-        return False
-
-    # Resolve a host
-    def resolveHost(self, host):
-        try:
-            # IDNA-encode the hostname in case it contains unicode
-            if type(host) != unicode:
-                host = unicode(host, "utf-8", errors='replace').encode("idna")
-            else:
-                host = host.encode("idna")
-
-            addrs = socket.gethostbyname_ex(host)
-            if not addrs:
-                return False
-
-            return True
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + host + ": " + str(e))
-            return False
+                'DOMAIN_NAME', 'AFFILIATE_DOMAIN_NAME',
+                'AFFILIATE_INTERNET_NAME', 'AFFILIATE_INTERNET_NAME_UNRESOLVED']
 
     # Port scan for commonly open UDP ports
     def portScanUDP(self, ip):
@@ -227,7 +215,7 @@ class sfp_hackertarget(SpiderFootPlugin):
         eventData = event.data
         self.currentEventSrc = event
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if srcModuleName == "sfp_hackertarget" and eventName == "IP_ADDRESS":
             self.sf.debug("Ignoring " + eventName + ", from self.")
@@ -235,7 +223,7 @@ class sfp_hackertarget(SpiderFootPlugin):
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
 
         if eventName == 'NETBLOCK_OWNER':
@@ -259,33 +247,41 @@ class sfp_hackertarget(SpiderFootPlugin):
 
             # Try and pull out individual records
             for row in records:
-                pat = re.compile("^(\S+)\.?\s+\d+\s+IN\s+[AC].*", re.IGNORECASE | re.DOTALL)
+                pat = re.compile(r"^(\S+)\.?\s+\d+\s+IN\s+[AC].*", re.IGNORECASE | re.DOTALL)
                 grps = re.findall(pat, row)
 
                 if len(grps) == 0:
                     continue
 
-                domains = list()
+                hosts = list()
 
                 for strdata in grps:
                     self.sf.debug("Matched: " + strdata)
                     if strdata.endswith("."):
-                        domains.append(strdata[:-1])
+                        hosts.append(strdata[:-1])
                     else:
-                        domains.append(strdata + "." + name)
+                        hosts.append(strdata)
 
-                for domain in set(domains):
-                    if self.getTarget().matches(domain, includeChildren=True, includeParents=True):
+                for host in set(hosts):
+                    if self.getTarget().matches(host, includeChildren=True, includeParents=True):
                         evt_type = 'INTERNET_NAME'
                     else:
-                        evt_type = 'AFFILIATE_DOMAIN'
+                        evt_type = 'AFFILIATE_INTERNET_NAME'
 
-                    if self.opts['verify'] and not self.resolveHost(domain):
-                        self.sf.debug("Host " + domain + " could not be resolved")
+                    if self.opts['verify'] and not self.sf.resolveHost(host):
+                        self.sf.debug(f"Host {host} could not be resolved")
                         evt_type += '_UNRESOLVED'
 
-                    evt = SpiderFootEvent(evt_type, domain, self.__name__, event)
+                    evt = SpiderFootEvent(evt_type, host, self.__name__, event)
                     self.notifyListeners(evt)
+
+                    if self.sf.isDomain(host, self.opts['_internettlds']):
+                        if evt_type.startswith('AFFILIATE'):
+                            evt = SpiderFootEvent('AFFILIATE_DOMAIN_NAME', host, self.__name__, event)
+                            self.notifyListeners(evt)
+                        else:
+                            evt = SpiderFootEvent('DOMAIN_NAME', host, self.__name__, event)
+                            self.notifyListeners(evt)
 
             return None
 
@@ -306,6 +302,8 @@ class sfp_hackertarget(SpiderFootPlugin):
                 return None
 
             hosts = self.reverseIpLookup(ip)
+            if not hosts:
+                continue
 
             for h in hosts:
                 if " " in h:
@@ -319,7 +317,7 @@ class sfp_hackertarget(SpiderFootPlugin):
                         continue
 
                 if h not in myres and h != ip:
-                    if self.opts['verify'] and not self.validateIP(h, ip):
+                    if self.opts['verify'] and not self.sf.validateIP(h, ip):
                         self.sf.debug("Host " + h + " no longer resolves to " + ip)
                         continue
                     if self.cohostcount < self.opts['maxcohost']:
@@ -337,22 +335,33 @@ class sfp_hackertarget(SpiderFootPlugin):
                         myres.append(h.lower())
                         self.cohostcount += 1
 
+            # For netblocks, we need to create the IP address event so that
+            # the threat intel event is more meaningful.
+            if eventName.startswith('NETBLOCK_'):
+                pevent = SpiderFootEvent("IP_ADDRESS", ip, self.__name__, event)
+                self.notifyListeners(pevent)
+            else:
+                pevent = event
+
             if self.opts.get('http_headers', True):
                 http_headers = self.httpHeaders(ip)
                 if http_headers is not None:
-                    e = SpiderFootEvent('WEBSERVER_HTTPHEADERS', json.dumps(http_headers), self.__name__, event)
+                    e = SpiderFootEvent('WEBSERVER_HTTPHEADERS', json.dumps(http_headers), self.__name__, pevent)
+                    e.actualSource = ip
                     self.notifyListeners(e)
 
             if self.opts.get('udp_portscan', True):
                 udp_ports = self.portScanUDP(ip)
-                for port in udp_ports:
-                    e = SpiderFootEvent("UDP_PORT_OPEN", ip + ":" + port, self.__name__, event)
-                    self.notifyListeners(e)
+                if udp_ports:
+                    for port in udp_ports:
+                        e = SpiderFootEvent("UDP_PORT_OPEN", ip + ":" + port, self.__name__, pevent)
+                        self.notifyListeners(e)
 
             if self.opts.get('tcp_portscan', True):
                 tcp_ports = self.portScanTCP(ip)
-                for port in tcp_ports:
-                    e = SpiderFootEvent("TCP_PORT_OPEN", ip + ":" + port, self.__name__, event)
-                    self.notifyListeners(e)
+                if tcp_ports:
+                    for port in tcp_ports:
+                        e = SpiderFootEvent("TCP_PORT_OPEN", ip + ":" + port, self.__name__, pevent)
+                        self.notifyListeners(e)
 
 # End of sfp_hackertarget class

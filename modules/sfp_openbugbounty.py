@@ -10,13 +10,36 @@
 #-------------------------------------------------------------------------------
 
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_openbugbounty(SpiderFootPlugin):
-    """Open Bug Bounty:Footprint,Investigate,Passive:Leaks, Dumps and Breaches::Check external vulnerability scanning/reporting service openbugbounty.org to see if the target is listed."""
 
-
-
+    meta = {
+        'name': "Open Bug Bounty",
+        'summary': "Check external vulnerability scanning/reporting service openbugbounty.org to see if the target is listed.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Leaks, Dumps and Breaches"],
+        'dataSource': {
+            'website': "https://www.openbugbounty.org/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://www.openbugbounty.org/cert/"
+            ],
+            'favIcon': "https://www.openbugbounty.org/favicon.ico",
+            'logo': "https://www.openbugbounty.org/images/design/logo-obbnew.svg",
+            'description': "Open Bug Bounty is an open, disintermediated, cost-free, and community-driven bug bounty platform "
+                                "for coordinated, responsible and ISO 29147 compatible vulnerability disclosure.\n"
+                                "The role of Open Bug Bounty is limited to independent verification of the "
+                                "submitted vulnerabilities and proper notification of website owners by all available means. "
+                                "Once notified, the website owner and the researcher are in direct contact to "
+                                "remediate the vulnerability and coordinate its disclosure. "
+                                "At this and at any later stages, we never act as an intermediary between "
+                                "website owners and security researchers.",
+        }
+    }
     # Default options
     opts = {
     }
@@ -28,16 +51,16 @@ class sfp_openbugbounty(SpiderFootPlugin):
     # Be sure to completely clear any class variables in setup()
     # or you run the risk of data persisting between scan runs.
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -79,11 +102,11 @@ class sfp_openbugbounty(SpiderFootPlugin):
         eventData = event.data
         data = list()
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
-       # Don't look up stuff twice
-        if self.results.has_key(eventData):
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+        # Don't look up stuff twice
+        if eventData in self.results:
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
         else:
             self.results[eventData] = True

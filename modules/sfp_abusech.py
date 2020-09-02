@@ -10,65 +10,77 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-from netaddr import IPAddress, IPNetwork
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from netaddr import IPAddress, IPNetwork
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 malchecks = {
-    'abuse.ch Zeus Tracker (Domain)': {
-        'id': 'abusezeusdomain',
-        'type': 'list',
-        'checks': ['domain'],
-        'url': 'https://zeustracker.abuse.ch/blocklist.php?download=baddomains'
-    },
-    'abuse.ch Zeus Tracker (IP)': {
-        'id': 'abusezeusip',
-        'type': 'list',
-        'checks': ['ip', 'netblock'],
-        'url': 'https://zeustracker.abuse.ch/blocklist.php?download=badips'
-    },
     'abuse.ch Feodo Tracker (IP)': {
         'id': 'abusefeodoip',
-        'type': 'list',
         'checks': ['ip', 'netblock'],
         'url': 'https://feodotracker.abuse.ch/downloads/ipblocklist.txt'
     },
     'abuse.ch SSL Blacklist (IP)': {
         'id': 'abusesslblip',
-        'type': 'list',
         'checks': ['ip', 'netblock'],
         'url': 'https://sslbl.abuse.ch/blacklist/sslipblacklist.csv',
         'regex': '{0},.*'
     },
     'abuse.ch URLhaus (Domain)': {
         'id': 'abuseurlhaus',
-        'type': 'list',
         'checks': ['domain'],
-        'url': 'https://urlhaus.abuse.ch/downloads/csv/',
+        'url': 'https://urlhaus.abuse.ch/downloads/csv_recent/',
         'regex': '.*//{0}/.*'
-    },
-    'abuse.ch Ransomware Blocklist (Domain)': {
-        'id': 'abuseransomdom',
-        'type': 'list',
-        'checks': ['domain'],
-        'url': 'https://ransomwaretracker.abuse.ch/downloads/RW_DOMBL.txt',
-        'regex': '^{0}$'
     }
 }
 
 class sfp_abusech(SpiderFootPlugin):
-    """abuse.ch:Investigate,Passive:Reputation Systems::Check if a host/domain, IP or netblock is malicious according to abuse.ch."""
 
+    meta = {
+        'name': "abuse.ch",
+        'summary': "Check if a host/domain, IP or netblock is malicious according to abuse.ch.",
+        'flags': [],
+        'useCases': ["Passive", "Investigate"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://www.abuse.ch",
+            'model': "FREE_AUTH_UNLIMITED",
+            'references': [
+                "https://bazaar.abuse.ch/",
+                "https://feodotracker.abuse.ch/",
+                "https://igotphished.abuse.ch/",
+                "https://sslbl.abuse.ch/",
+                "https://urlhaus.abuse.ch/"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://bazaar.abuse.ch/api#api_key",
+                "Login using a Twitter Account",
+                "Navigate to 'Account Settings'",
+                "The API key is listed under 'Your API Key'",
+                "Visit https://igotphished.abuse.ch/api/",
+                "Request an API key from the email listed under 'Submit data to I Got Phished'",
+                "Visit https://urlhaus.abuse.ch/api/",
+                "Login using a Twitter Account at https://urlhaus.abuse.ch/login/",
+                "Navigate to https://urlhaus.abuse.ch/api/#account",
+                "The API Key is listed under 'API-Key'"
+            ],
+            'favIcon': "https://abuse.ch/favicon.ico",
+            'logo': "https://abuse.ch/images/abusech.svg",
+            'description': "abuse.ch is operated by a random swiss guy fighting malware for non-profit, "
+                                "running a couple of projects helping internet service providers and "
+                                "network operators protecting their infrastructure from malware.\n"
+                                "IT-Security researchers, vendors and law enforcement agencies rely on data from abuse.ch,"
+                                "trying to make the internet a safer place.",
+        }
+    }
 
     # Default options
     opts = {
-        'abusezeusdomain': True,
-        'abusezeusip': True,
-        'abusefeododomain': True,
         'abusefeodoip': True,
         'abusesslblip': True,
         'abuseurlhaus': True,
-        'abuseransomdom': True,
         'checkaffiliates': True,
         'checkcohosts': True,
         'cacheperiod': 18,
@@ -78,13 +90,9 @@ class sfp_abusech(SpiderFootPlugin):
 
     # Option descriptions
     optdescs = {
-        'abusezeusdomain': "Enable abuse.ch Zeus domain check?",
-        'abusezeusip': "Enable abuse.ch Zeus IP check?",
-        'abusefeododomain': "Enable abuse.ch Feodo domain check?",
         'abusefeodoip': "Enable abuse.ch Feodo IP check?",
         'abusesslblip': "Enable abuse.ch SSL Backlist IP check?",
         'abuseurlhaus': "Enable abuse.ch URLhaus check?",
-        'abuseransomdom': "Enable abuse.ch Ransom Domains check?",
         'checkaffiliates': "Apply checks to affiliates?",
         'checkcohosts': "Apply checks to sites found to be co-hosted on the target's IP?",
         'cacheperiod': "Hours to cache list data before re-fetching.",
@@ -95,16 +103,16 @@ class sfp_abusech(SpiderFootPlugin):
     # Be sure to completely clear any class variables in setup()
     # or you run the risk of data persisting between scan runs.
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -122,54 +130,18 @@ class sfp_abusech(SpiderFootPlugin):
                 "MALICIOUS_AFFILIATE_IPADDR", "MALICIOUS_AFFILIATE_INTERNET_NAME",
                 "MALICIOUS_SUBNET", "MALICIOUS_COHOST", "MALICIOUS_NETBLOCK"]
 
-    # Check the regexps to see whether the content indicates maliciousness
-    def contentMalicious(self, content, goodregex, badregex):
-        # First, check for the bad indicators
-        if len(badregex) > 0:
-            for rx in badregex:
-                if re.match(rx, content, re.IGNORECASE | re.DOTALL):
-                    self.sf.debug("Found to be bad against bad regex: " + rx)
-                    return True
-
-        # Finally, check for good indicators
-        if len(goodregex) > 0:
-            for rx in goodregex:
-                if re.match(rx, content, re.IGNORECASE | re.DOTALL):
-                    self.sf.debug("Found to be good againt good regex: " + rx)
-                    return False
-
-        # If nothing was matched, reply None
-        self.sf.debug("Neither good nor bad, unknown.")
-        return None
-
-    # Look up 'query' type sources
-    def resourceQuery(self, id, target, targetType):
-        self.sf.debug("Querying " + id + " for maliciousness of " + target)
-        for check in malchecks.keys():
-            cid = malchecks[check]['id']
-            if id == cid and malchecks[check]['type'] == "query":
-                url = unicode(malchecks[check]['url'])
-                res = self.sf.fetchUrl(url.format(target), timeout=self.opts['_fetchtimeout'], useragent=self.opts['_useragent'])
-                if res['content'] is None:
-                    self.sf.error("Unable to fetch " + url.format(target), False)
-                    return None
-                if self.contentMalicious(res['content'],
-                                         malchecks[check]['goodregex'],
-                                         malchecks[check]['badregex']):
-                    return url.format(target)
-
-        return None
-
     # Look up 'list' type resources
     def resourceList(self, id, target, targetType):
         targetDom = ''
         # Get the base domain if we're supplied a domain
         if targetType == "domain":
             targetDom = self.sf.hostDomain(target, self.opts['_internettlds'])
+            if not targetDom:
+                return None
 
-        for check in malchecks.keys():
+        for check in list(malchecks.keys()):
             cid = malchecks[check]['id']
-            if id == cid and malchecks[check]['type'] == "list":
+            if id == cid:
                 data = dict()
                 url = malchecks[check]['url']
                 data['content'] = self.sf.cacheGet("sfmal_" + cid, self.opts.get('cacheperiod', 0))
@@ -184,12 +156,11 @@ class sfp_abusech(SpiderFootPlugin):
                 # If we're looking at netblocks
                 if targetType == "netblock":
                     iplist = list()
-                    # Get the regex, replace {0} with an IP address matcher to 
+                    # Get the regex, replace {0} with an IP address matcher to
                     # build a list of IP.
                     # Cycle through each IP and check if it's in the netblock.
                     if 'regex' in malchecks[check]:
-                        rx = malchecks[check]['regex'].replace("{0}",
-                                                               "(\d+\.\d+\.\d+\.\d+)")
+                        rx = malchecks[check]['regex'].replace("{0}", r"(\d+\.\d+\.\d+\.\d+)")
                         pat = re.compile(rx, re.IGNORECASE)
                         self.sf.debug("New regex for " + check + ": " + rx)
                         for line in data['content'].split('\n'):
@@ -225,8 +196,8 @@ class sfp_abusech(SpiderFootPlugin):
                 else:
                     try:
                         # Check for the domain and the hostname
-                        rxDom = unicode(malchecks[check]['regex']).format(targetDom)
-                        rxTgt = unicode(malchecks[check]['regex']).format(target)
+                        rxDom = str(malchecks[check]['regex']).format(targetDom)
+                        rxTgt = str(malchecks[check]['regex']).format(target)
                         for line in data['content'].split('\n'):
                             if (targetType == "domain" and re.match(rxDom, line, re.IGNORECASE)) or \
                                     re.match(rxTgt, line, re.IGNORECASE):
@@ -239,15 +210,11 @@ class sfp_abusech(SpiderFootPlugin):
         return None
 
     def lookupItem(self, resourceId, itemType, target):
-        for check in malchecks.keys():
+        for check in list(malchecks.keys()):
             cid = malchecks[check]['id']
             if cid == resourceId and itemType in malchecks[check]['checks']:
-                self.sf.debug("Checking maliciousness of " + target + " (" +
-                              itemType + ") with: " + cid)
-                if malchecks[check]['type'] == "query":
-                    return self.resourceQuery(cid, target, itemType)
-                if malchecks[check]['type'] == "list":
-                    return self.resourceList(cid, target, itemType)
+                self.sf.debug("Checking maliciousness of " + target + " (" + itemType + ") with: " + cid)
+                return self.resourceList(cid, target, itemType)
 
         return None
 
@@ -257,13 +224,13 @@ class sfp_abusech(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + ", already checked.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
-        else:
-            self.results[eventData] = True
+
+        self.results[eventData] = True
 
         if eventName == 'CO_HOSTED_SITE' and not self.opts.get('checkcohosts', False):
             return None
@@ -275,47 +242,47 @@ class sfp_abusech(SpiderFootPlugin):
         if eventName == 'NETBLOCK_MEMBER' and not self.opts.get('checksubnets', False):
             return None
 
-        for check in malchecks.keys():
+        for check in list(malchecks.keys()):
             cid = malchecks[check]['id']
-            # If the module is enabled..
-            if self.opts[cid]:
-                if eventName in ['IP_ADDRESS', 'AFFILIATE_IPADDR']:
-                    typeId = 'ip'
-                    if eventName == 'IP_ADDRESS':
-                        evtType = 'MALICIOUS_IPADDR'
-                    else:
-                        evtType = 'MALICIOUS_AFFILIATE_IPADDR'
 
-                if eventName in ['BGP_AS_OWNER', 'BGP_AS_MEMBER']:
-                    typeId = 'asn'
-                    evtType = 'MALICIOUS_ASN'
+            if eventName in ['IP_ADDRESS', 'AFFILIATE_IPADDR']:
+                typeId = 'ip'
+                if eventName == 'IP_ADDRESS':
+                    evtType = 'MALICIOUS_IPADDR'
+                else:
+                    evtType = 'MALICIOUS_AFFILIATE_IPADDR'
 
-                if eventName in ['INTERNET_NAME', 'CO_HOSTED_SITE',
-                                 'AFFILIATE_INTERNET_NAME', ]:
-                    typeId = 'domain'
-                    if eventName == "INTERNET_NAME":
-                        evtType = "MALICIOUS_INTERNET_NAME"
-                    if eventName == 'AFFILIATE_INTERNET_NAME':
-                        evtType = 'MALICIOUS_AFFILIATE_INTERNET_NAME'
-                    if eventName == 'CO_HOSTED_SITE':
-                        evtType = 'MALICIOUS_COHOST'
+            if eventName in ['BGP_AS_OWNER', 'BGP_AS_MEMBER']:
+                typeId = 'asn'
+                evtType = 'MALICIOUS_ASN'
 
-                if eventName == 'NETBLOCK_OWNER':
-                    typeId = 'netblock'
-                    evtType = 'MALICIOUS_NETBLOCK'
-                if eventName == 'NETBLOCK_MEMBER':
-                    typeId = 'netblock'
-                    evtType = 'MALICIOUS_SUBNET'
+            if eventName in ['INTERNET_NAME', 'CO_HOSTED_SITE',
+                             'AFFILIATE_INTERNET_NAME']:
+                typeId = 'domain'
+                if eventName == "INTERNET_NAME":
+                    evtType = "MALICIOUS_INTERNET_NAME"
+                if eventName == 'AFFILIATE_INTERNET_NAME':
+                    evtType = 'MALICIOUS_AFFILIATE_INTERNET_NAME'
+                if eventName == 'CO_HOSTED_SITE':
+                    evtType = 'MALICIOUS_COHOST'
 
-                url = self.lookupItem(cid, typeId, eventData)
-                if self.checkForStop():
-                    return None
+            if eventName == 'NETBLOCK_OWNER':
+                typeId = 'netblock'
+                evtType = 'MALICIOUS_NETBLOCK'
+            if eventName == 'NETBLOCK_MEMBER':
+                typeId = 'netblock'
+                evtType = 'MALICIOUS_SUBNET'
 
-                # Notify other modules of what you've found
-                if url is not None:
-                    text = check + " [" + eventData + "]\n" + "<SFURL>" + url + "</SFURL>"
-                    evt = SpiderFootEvent(evtType, text, self.__name__, event)
-                    self.notifyListeners(evt)
+            url = self.lookupItem(cid, typeId, eventData)
+
+            if self.checkForStop():
+                return None
+
+            # Notify other modules of what you've found
+            if url is not None:
+                text = f"{check} [{eventData}]\n<SFURL>{url}</SFURL>"
+                evt = SpiderFootEvent(evtType, text, self.__name__, event)
+                self.notifyListeners(evt)
 
         return None
 

@@ -10,16 +10,36 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import socket
 import json
 import time
+
 from netaddr import IPNetwork
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_robtex(SpiderFootPlugin):
-    """Robtex:Footprint,Investigate,Passive:Passive DNS::Search Robtex.com for hosts sharing the same IP."""
 
+    meta = {
+        'name': "Robtex",
+        'summary': "Search Robtex.com for hosts sharing the same IP.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Passive DNS"],
+        'dataSource': {
+            'website': "https://www.robtex.com/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://www.robtex.com/api/"
+            ],
+            'favIcon': "https://www.robtex.com/favicon.ico",
+            'logo': "https://www.robtex.com/favicon.ico",
+            'description': "Robtex is used for various kinds of research of IP numbers, Domain names, etc\n"
+                                "Robtex uses various sources to gather public information about "
+                                "IP numbers, domain names, host names, Autonomous systems, routes etc. "
+                                "It then indexes the data in a big database and provide free access to the data.",
+        }
+    }
 
     # Default options
     opts = {
@@ -27,7 +47,9 @@ class sfp_robtex(SpiderFootPlugin):
         'netblocklookup': True,
         'maxnetblock': 24,
         'cohostsamedomain': False,
-        'maxcohost': 100
+        'maxcohost': 100,
+        'subnetlookup': False,
+        'maxsubnet': 24
     }
 
     # Option descriptions
@@ -36,18 +58,20 @@ class sfp_robtex(SpiderFootPlugin):
         'netblocklookup': "Look up all IPs on netblocks deemed to be owned by your target for possible co-hosts on the same target subdomain/domain?",
         'maxnetblock': "If looking up owned netblocks, the maximum netblock size to look up all IPs within (CIDR value, 24 = /24, 16 = /16, etc.)",
         'cohostsamedomain': "Treat co-hosted sites on the same target domain as co-hosting?",
-        'maxcohost': "Stop reporting co-hosted sites after this many are found, as it would likely indicate web hosting."
+        'maxcohost': "Stop reporting co-hosted sites after this many are found, as it would likely indicate web hosting.",
+        'subnetlookup': "Look up all IPs on subnets which your target is a part of?",
+        'maxsubnet': "If looking up subnets, the maximum subnet size to look up all the IPs within (CIDR value, 24 = /24, 16 = /16, etc.)"
     }
 
-    results = dict()
+    results = None
     cohostcount = 0
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.cohostcount = 0
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -60,22 +84,9 @@ class sfp_robtex(SpiderFootPlugin):
     def producedEvents(self):
         return ["CO_HOSTED_SITE", "IP_ADDRESS"]
 
-    def validateIP(self, host, ip):
-        try:
-            addrs = socket.gethostbyname_ex(host)
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + host + ": " + str(e))
-            return False
-
-        for addr in addrs:
-            if type(addr) == list:
-                for a in addr:
-                    if str(a) == ip:
-                        return True
-            else:
-                if str(addr) == ip:
-                    return True
-        return False
+    # Don't notify me about events from myself
+    def watchOpts(self):
+        return ['noself']
 
     # Handle events sent to this module
     def handleEvent(self, event):
@@ -84,7 +95,7 @@ class sfp_robtex(SpiderFootPlugin):
         eventData = event.data
         self.currentEventSrc = event
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if self.cohostcount > self.opts['maxcohost']:
             return None
@@ -95,7 +106,7 @@ class sfp_robtex(SpiderFootPlugin):
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
 
         if eventName == 'NETBLOCK_OWNER':
@@ -108,6 +119,16 @@ class sfp_robtex(SpiderFootPlugin):
                                   str(self.opts['maxnetblock']))
                     return None
 
+        if eventName == 'NETBLOCK_MEMBER':
+            if not self.opts['subnetlookup']:
+                return None
+            else:
+                if IPNetwork(eventData).prefixlen < self.opts['maxsubnet']:
+                    self.sf.debug("Network size bigger than permitted: " +
+                                  str(IPNetwork(eventData).prefixlen) + " > " +
+                                  str(self.opts['maxsubnet']))
+                    return None
+
         qrylist = list()
         if eventName.startswith("NETBLOCK_"):
             for ipaddr in IPNetwork(eventData):
@@ -117,16 +138,13 @@ class sfp_robtex(SpiderFootPlugin):
             qrylist.append(eventData)
             self.results[eventData] = True
 
-        myres = list()
-
         for ip in qrylist:
             if self.checkForStop():
                 return None
 
             retry = 0
             while retry < 2:
-                res = self.sf.fetchUrl("https://freeapi.robtex.com/ipquery/" + ip,
-                                   timeout=self.opts['_fetchtimeout'])
+                res = self.sf.fetchUrl("https://freeapi.robtex.com/ipquery/" + ip, timeout=self.opts['_fetchtimeout'])
                 if res['code'] == "200":
                     break
                 if res['code'] == "404":
@@ -144,9 +162,9 @@ class sfp_robtex(SpiderFootPlugin):
             try:
                 data = json.loads(res['content'])
             except BaseException as e:
-                self.sf.error("Error parsing JSON from robtex API.", False)
+                self.sf.error(f"Error parsing JSON from Robtex API: {e}", False)
                 return None
-            
+
             pas = data.get('pas')
             if not pas:
                 return None
@@ -160,7 +178,7 @@ class sfp_robtex(SpiderFootPlugin):
                             self.sf.debug("Skipping " + r['o'] + " because it is on the same domain.")
                             continue
 
-                    if self.opts['verify'] and not self.validateIP(r['o'], ip):
+                    if self.opts['verify'] and not self.sf.validateIP(r['o'], ip):
                         self.sf.debug("Host " + r['o'] + " no longer resolves to " + ip)
                         continue
                     if eventName == "NETBLOCK_OWNER":

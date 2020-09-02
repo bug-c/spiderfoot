@@ -12,14 +12,37 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import socket
 from netaddr import IPNetwork
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_spamhaus(SpiderFootPlugin):
-    """Spamhaus:Investigate,Passive:Reputation Systems::Query the Spamhaus databases for open relays, open proxies, vulnerable servers, etc."""
 
+    meta = {
+        'name': "Spamhaus",
+        'summary': "Query the Spamhaus databases for open relays, open proxies, vulnerable servers, etc.",
+        'flags': [""],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://www.spamhaus.org/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://www.spamhaus.org/organization/dnsblusage/",
+                "https://www.spamhaus.org/datafeed/",
+                "https://www.spamhaus.org/whitepapers/dnsbl_function/",
+                "https://www.spamhaus.org/faq/section/DNSBL%20Usage"
+            ],
+            'favIcon': "https://www.spamhaus.org/favicon.ico",
+            'logo': "https://www.spamhaus.org/images/sh_logo1.jpg",
+            'description': "The Spamhaus Project is an international nonprofit organization that "
+                                "tracks spam and related cyber threats such as phishing, malware and botnets, "
+                                "provides realtime actionable and highly accurate threat intelligence to "
+                                "the Internet's major networks, corporations and security vendors, "
+                                "and works with law enforcement agencies to identify and pursue spam and malware sources worldwide.",
+        }
+    }
 
     # Default options
     opts = {
@@ -38,7 +61,7 @@ class sfp_spamhaus(SpiderFootPlugin):
     }
 
     # Target
-    results = dict()
+    results = None
 
     # Whole bunch here:
     # http://en.wikipedia.org/wiki/Comparison_of_DNS_blacklists
@@ -59,9 +82,9 @@ class sfp_spamhaus(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -90,8 +113,11 @@ class sfp_spamhaus(SpiderFootPlugin):
             try:
                 lookup = self.reverseAddr(qaddr) + "." + domain
                 self.sf.debug("Checking Blacklist: " + lookup)
-                addrs = self.sf.normalizeDNS(socket.gethostbyname_ex(lookup))
+                addrs = self.sf.resolveHost(lookup)
                 self.sf.debug("Addresses returned: " + str(addrs))
+
+                if not addrs:
+                    continue
 
                 text = None
                 for addr in addrs:
@@ -99,7 +125,7 @@ class sfp_spamhaus(SpiderFootPlugin):
                         text = self.checks[domain] + " (" + qaddr + ")"
                         break
                     else:
-                        if str(addr) not in self.checks[domain].keys():
+                        if str(addr) not in list(self.checks[domain].keys()):
                             self.sf.debug("Return code not found in list: " + str(addr))
                             continue
 
@@ -131,9 +157,8 @@ class sfp_spamhaus(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
         parentEvent = event
-        addrlist = list()
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
             return None
@@ -144,9 +169,9 @@ class sfp_spamhaus(SpiderFootPlugin):
                 return None
             else:
                 if IPNetwork(eventData).prefixlen < self.opts['maxnetblock']:
-                    self.sf.debug("Network size bigger than permitted: " +
-                                  str(IPNetwork(eventData).prefixlen) + " > " +
-                                  str(self.opts['maxnetblock']))
+                    self.sf.debug("Network size bigger than permitted: "
+                                  + str(IPNetwork(eventData).prefixlen) + " > "
+                                  + str(self.opts['maxnetblock']))
                     return None
 
         if eventName == 'NETBLOCK_MEMBER':
@@ -154,9 +179,9 @@ class sfp_spamhaus(SpiderFootPlugin):
                 return None
             else:
                 if IPNetwork(eventData).prefixlen < self.opts['maxsubnet']:
-                    self.sf.debug("Network size bigger than permitted: " +
-                                  str(IPNetwork(eventData).prefixlen) + " > " +
-                                  str(self.opts['maxsubnet']))
+                    self.sf.debug("Network size bigger than permitted: "
+                                  + str(IPNetwork(eventData).prefixlen) + " > "
+                                  + str(self.opts['maxsubnet']))
                     return None
 
         if eventName.startswith("NETBLOCK_"):

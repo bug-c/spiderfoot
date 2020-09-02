@@ -11,15 +11,38 @@
 # -------------------------------------------------------------------------------
 
 import json
-from datetime import datetime
 import time
-import socket
+from datetime import datetime
+
 from netaddr import IPNetwork
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_threatminer(SpiderFootPlugin):
-    """ThreatMiner:Footprint,Investigate,Passive:Search Engines::Obtain information from ThreatMiner's database for passive DNS and threat intelligence."""
 
+    meta = {
+        'name': "ThreatMiner",
+        'summary': "Obtain information from ThreatMiner's database for passive DNS and threat intelligence.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Search Engines"],
+        'dataSource': {
+            'website': "https://www.threatminer.org/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://www.threatminer.org/api.php",
+                "https://www.threatminer.org/features.php"
+            ],
+            'favIcon': "https://www.threatminer.org/images/favicon.gif",
+            'logo': "https://www.threatminer.org/images/logo.png",
+            'description': "ThreatMiner is a threat intelligence portal designed to enable analysts to research under a single interface. "
+                                "It is used in the SANS FOR578 Cyber Threat Intelligence course.\n"
+                                "Threat intelligence and intrusion analysts who regularly perform research "
+                                "into malware and network infrastructure often find the need to rely on "
+                                "mutliple websites that individually holds a small piece of the larger puzzle.",
+        }
+    }
     # Default options
     opts = {
         'verify': True,
@@ -60,32 +83,17 @@ class sfp_threatminer(SpiderFootPlugin):
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return ["IP_ADDRESS", "DOMAIN_NAME", "NETBLOCK_OWNER", 
+        return ["IP_ADDRESS", "DOMAIN_NAME", "NETBLOCK_OWNER",
                 "NETBLOCK_MEMBER"]
 
     # What events this module produces
     def producedEvents(self):
         return ["INTERNET_NAME", "CO_HOSTED_SITE"]
-
-    # Verify a host resolves
-    def resolveHost(self, host):
-        try:
-            # IDNA-encode the hostname in case it contains unicode
-            if type(host) != unicode:
-                host = unicode(host, "utf-8", errors='replace').encode("idna")
-            else:
-                host = host.encode("idna")
-
-            addrs = socket.gethostbyname_ex(host)
-            return True
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + host + ": " + str(e))
-            return False
 
     def query(self, qry, querytype):
         if self.sf.validIP(qry):
@@ -99,7 +107,7 @@ class sfp_threatminer(SpiderFootPlugin):
             queryurl = "/v2/" + tgttype + ".php?q={0}&rt=2"
 
         threatminerurl = "https://api.threatminer.org"
-        url = threatminerurl + queryurl.format(qry.encode('utf-8', errors='replace'))
+        url = threatminerurl + queryurl.format(qry)
         res = self.sf.fetchUrl(url, timeout=10, useragent="SpiderFoot")
 
         if res['content'] is None:
@@ -113,7 +121,7 @@ class sfp_threatminer(SpiderFootPlugin):
         try:
             info = json.loads(res['content'])
         except Exception as e:
-            self.sf.error("Error processing JSON response from ThreatMiner.", False)
+            self.sf.error(f"Error processing JSON response from ThreatMiner: {e}", False)
             return None
 
         return info
@@ -124,11 +132,11 @@ class sfp_threatminer(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
         else:
             self.results[eventData] = True
@@ -138,9 +146,9 @@ class sfp_threatminer(SpiderFootPlugin):
                 return None
             else:
                 if IPNetwork(eventData).prefixlen < self.opts['maxnetblock']:
-                    self.sf.debug("Network size bigger than permitted: " +
-                                  str(IPNetwork(eventData).prefixlen) + " > " +
-                                  str(self.opts['maxnetblock']))
+                    self.sf.debug("Network size bigger than permitted: "
+                                  + str(IPNetwork(eventData).prefixlen) + " > "
+                                  + str(self.opts['maxnetblock']))
                     return None
 
         if eventName == 'NETBLOCK_MEMBER':
@@ -148,9 +156,9 @@ class sfp_threatminer(SpiderFootPlugin):
                 return None
             else:
                 if IPNetwork(eventData).prefixlen < self.opts['maxsubnet']:
-                    self.sf.debug("Network size bigger than permitted: " +
-                                  str(IPNetwork(eventData).prefixlen) + " > " +
-                                  str(self.opts['maxsubnet']))
+                    self.sf.debug("Network size bigger than permitted: "
+                                  + str(IPNetwork(eventData).prefixlen) + " > "
+                                  + str(self.opts['maxsubnet']))
                     return None
 
         qrylist = list()
@@ -193,7 +201,7 @@ class sfp_threatminer(SpiderFootPlugin):
                     continue
                 if self.getTarget().matches(host, includeParents=True):
                     if self.opts['verify']:
-                        if not self.resolveHost(host):
+                        if not self.sf.resolveHost(host):
                             continue
                     evt = SpiderFootEvent("INTERNET_NAME", host, self.__name__, event)
                     self.notifyListeners(evt)
@@ -223,7 +231,7 @@ class sfp_threatminer(SpiderFootPlugin):
                 else:
                     self.reportedhosts[rec] = True
                 if self.opts['verify']:
-                    if not self.resolveHost(rec):
+                    if not self.sf.resolveHost(rec):
                         self.sf.debug("Couldn't resolve " + rec + ", so skipping.")
                         continue
                 e = SpiderFootEvent(evtType, rec, self.__name__, event)

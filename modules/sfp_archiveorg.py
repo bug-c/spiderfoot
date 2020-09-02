@@ -13,12 +13,39 @@
 
 import datetime
 import json
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_archiveorg(SpiderFootPlugin):
-    """Archive.org:Footprint:Search Engines:slow:Identifies historic versions of interesting files/pages from the Wayback Machine."""
 
+    meta = {
+        'name': "Archive.org",
+        'summary': "Identifies historic versions of interesting files/pages from the Wayback Machine.",
+        'flags': ["slow"],
+        'useCases': ["Footprint", "Passive"],
+        'categories': ["Search Engines"],
+        'dataSource': {
+            'website': "https://archive.org/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://archive.org/projects/",
+                "https://archive.org/services/docs/api/"
+            ],
+            'favIcon': "https://archive.org/images/glogo.jpg",
+            'logo': "https://archive.org/images/glogo.jpg",
+            'description': "Internet Archive is a non-profit library of millions of free books, movies, software, music, websites, and more.\n"
+                               "The Internet Archive, a 501(c)(3) non-profit, is building a digital library of Internet sites "
+                               "and other cultural artifacts in digital form. Like a paper library, we provide free access to "
+                               "researchers, historians, scholars, the print disabled, and the general public. "
+                               "Our mission is to provide Universal Access to All Knowledge.\n"
+                               "We began in 1996 by archiving the Internet itself, a medium that was just beginning to grow in use. "
+                               "Like newspapers, the content published on the web was ephemeral - but unlike newspapers, no one was saving it. "
+                               "Today we have 20+ years of web history accessible through the Wayback Machine and we work with 625+ library and "
+                               "other partners through our Archive-It program to identify important web pages.",
+        }
+
+    }
 
     # Default options
     opts = {
@@ -48,15 +75,15 @@ class sfp_archiveorg(SpiderFootPlugin):
         "javascriptpages": "Query the Wayback Machine for historic versions of URLs using Javascript."
     }
 
-    results = list()
+    results = None
     foundDates = list()
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = list()
+        self.results = self.tempStorage()
         self.foundDates = list()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -69,9 +96,9 @@ class sfp_archiveorg(SpiderFootPlugin):
     # This is to support the end user in selecting modules based on events
     # produced.
     def producedEvents(self):
-        return ["INTERESTING_FILE_HISTORIC", "URL_PASSWORD_HISTORIC", 
+        return ["INTERESTING_FILE_HISTORIC", "URL_PASSWORD_HISTORIC",
                 "URL_FORM_HISTORIC", "URL_FLASH_HISTORIC",
-                "URL_STATIC_HISTORIC", "URL_JAVA_APPLET_HISTORIC", 
+                "URL_STATIC_HISTORIC", "URL_JAVA_APPLET_HISTORIC",
                 "URL_UPLOAD_HISTORIC", "URL_WEB_FRAMEWORK_HISTORIC",
                 "URL_JAVASCRIPT_HISTORIC"]
 
@@ -81,7 +108,7 @@ class sfp_archiveorg(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventName == "INTERESTING_FILE" and not self.opts['intfiles']:
             return None
@@ -105,7 +132,7 @@ class sfp_archiveorg(SpiderFootPlugin):
         if eventData in self.results:
             return None
         else:
-            self.results.append(eventData)
+            self.results[eventData] = True
 
         for daysback in self.opts['farback'].split(","):
             newDate = datetime.datetime.now() - datetime.timedelta(days=int(daysback))
@@ -113,21 +140,21 @@ class sfp_archiveorg(SpiderFootPlugin):
 
             url = "https://archive.org/wayback/available?url=" + eventData + \
                   "&timestamp=" + maxDate
-            res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'], 
+            res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'],
                                    useragent=self.opts['_useragent'])
 
-            if res['content'] == None:
-                self.sf.error("Unable to fetch " + url, False)
+            if res['content'] is None:
+                self.sf.error(f"Unable to fetch {url}", False)
                 continue
 
             try:
                 ret = json.loads(res['content'])
             except BaseException as e:
+                self.sf.debug(f"Error processing JSON response from Archive.org: {e}")
                 ret = None
 
-            if ret == None:
-                self.sf.error("Unable to process empty response from archive.org: " + \
-                              eventData, False)
+            if not ret:
+                self.sf.error("Unable to process empty response from archive.org: {eventData}", False)
                 continue
 
             if len(ret['archived_snapshots']) < 1:

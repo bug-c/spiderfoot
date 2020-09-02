@@ -10,15 +10,47 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import json
 import base64
+import json
 import re
 import time
-import socket
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_circllu(SpiderFootPlugin):
-    """CIRCL.LU:Investigate,Passive:Reputation Systems:apikey:Obtain information from CIRCL.LU's Passive DNS and Passive SSL databases."""
+
+    meta = {
+        'name': "CIRCL.LU",
+        'summary': "Obtain information from CIRCL.LU's Passive DNS and Passive SSL databases.",
+        'flags': ["apikey"],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://www.circl.lu/",
+            'model': "FREE_AUTH_UNLIMITED",
+            'references': [
+                "https://www.circl.lu/services/passive-dns/",
+                "https://www.circl.lu/services/passive-ssl/",
+                "https://www.circl.lu/services/",
+                "https://www.circl.lu/pub/",
+                "https://www.circl.lu/projects"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://www.circl.lu/contact/",
+                "Contact with email or phone to request access for Passive DNS and Passive SSL API services",
+                "The API access will be provided once approved"
+            ],
+            'favIcon': "https://www.google.com/s2/favicons?domain=https://www.circl.lu/",
+            'logo': "https://www.circl.lu/assets/images/circl-logo.png",
+            'description': "The Computer Incident Response Center Luxembourg (CIRCL) is a government-driven initiative "
+                                "designed to gather, review, report and respond to computer security threats and incidents.\n"
+                                "CIRCL provides a reliable and trusted point of contact for any users, companies and organizations "
+                                "based in Luxembourg, for the handling of attacks and incidents. "
+                                "Its team of experts acts like a fire brigade, with the ability to react promptly and "
+                                "efficiently whenever threats are suspected, detected or incidents occur.",
+        }
+    }
 
     # Default options
     opts = {
@@ -55,26 +87,8 @@ class sfp_circllu(SpiderFootPlugin):
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
-
-    # Verify a host resolves to an IP
-    def validateIP(self, host, ip):
-        try:
-            addrs = socket.gethostbyname_ex(host)
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + host + ": " + str(e))
-            return False
-
-        for addr in addrs:
-            if type(addr) == list:
-                for a in addr:
-                    if str(a) == ip:
-                        return True
-            else:
-                if str(addr) == ip:
-                    return True
-        return False
 
     # What events is this module interested in for input
     def watchedEvents(self):
@@ -82,12 +96,9 @@ class sfp_circllu(SpiderFootPlugin):
 
     # What events this module produces
     def producedEvents(self):
-        return ["IP_ADDRESS", "INTERNET_NAME", "SSL_CERTIFICATE_ISSUED", 
-                "CO_HOSTED_SITE"]
+        return ["IP_ADDRESS", "SSL_CERTIFICATE_ISSUED", "CO_HOSTED_SITE"]
 
     def query(self, qry, qtype):
-        ret = None
-
         if self.errorState:
             return None
 
@@ -96,16 +107,17 @@ class sfp_circllu(SpiderFootPlugin):
         else:
             url = "https://www.circl.lu/v2pssl/query/" + qry
 
-        cred = base64.b64encode(self.opts['api_key_login'] + ":" + self.opts['api_key_password'])
+        secret = self.opts['api_key_login'] + ':' + self.opts['api_key_password']
+        b64_val = base64.b64encode(secret.encode('utf-8'))
         headers = {
-            'Authorization': "Basic " + cred
+            'Authorization': 'Basic %s' % b64_val.decode('utf-8')
         }
 
         # Be more forgiving with the timeout as some queries for subnets can be slow
-        res = self.sf.fetchUrl(url , timeout=30, 
+        res = self.sf.fetchUrl(url, timeout=30,
                                useragent="SpiderFoot", headers=headers)
 
-        if res['code'] in [ "400", "429", "500", "403" ]:
+        if res['code'] not in ["200", "201"]:
             self.sf.error("CIRCL.LU access seems to have been rejected or you have exceeded usage limits.", False)
             self.errorState = True
             return None
@@ -126,7 +138,7 @@ class sfp_circllu(SpiderFootPlugin):
         if self.errorState:
             return None
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Ignore messages from myself
         if srcModuleName == "sfp_circllu":
@@ -140,12 +152,12 @@ class sfp_circllu(SpiderFootPlugin):
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
         else:
             self.results[eventData] = True
 
-        if eventName in [ 'IP_ADDRESS', 'NETBLOCK_OWNER' ]:
+        if eventName in ['IP_ADDRESS', 'NETBLOCK_OWNER']:
             # CIRCL.LU limit the maximum subnet size to 23
             # http://circl.lu/services/passive-ssl/
             if "/" in eventData:
@@ -172,7 +184,7 @@ class sfp_circllu(SpiderFootPlugin):
                             ipe = SpiderFootEvent("IP_ADDRESS", ip, self.__name__, event)
                             self.notifyListeners(ipe)
                         for crt in j[ip]['subjects']:
-                            r = re.findall(".*[\"\'](.+CN=([a-zA-Z0-9\-\*\.])+)[\"\'].*", 
+                            r = re.findall(r".*[\"\'](.+CN=([a-zA-Z0-9\-\*\.])+)[\"\'].*",
                                            str(j[ip]['subjects'][crt]), re.IGNORECASE)
                             if r:
                                 e = SpiderFootEvent("SSL_CERTIFICATE_ISSUED", r[0][0], self.__name__, ipe)
@@ -180,7 +192,7 @@ class sfp_circllu(SpiderFootPlugin):
                 except BaseException as e:
                     self.sf.error("Invalid response returned from CIRCL.LU: " + str(e), False)
 
-        if eventName in [ 'IP_ADDRESS', 'INTERNET_NAME', 'DOMAIN_NAME' ]:
+        if eventName in ['IP_ADDRESS', 'INTERNET_NAME', 'DOMAIN_NAME']:
             ret = self.query(eventData, "PDNS")
             if not ret:
                 self.sf.info("No CIRCL.LU passive DNS data found for " + eventData)
@@ -209,7 +221,7 @@ class sfp_circllu(SpiderFootPlugin):
                             # We found a co-host
                             cohosts.append(rec['rrname'])
 
-                if eventName in [ "INTERNET_NAME", "DOMAIN_NAME" ]:
+                if eventName in ["INTERNET_NAME", "DOMAIN_NAME"]:
                     # Record could be an A/CNAME of this entity, or something pointing to it
                     if rec['rdata'] == eventData:
                         if not self.getTarget().matches(rec['rrname']):
@@ -217,7 +229,7 @@ class sfp_circllu(SpiderFootPlugin):
                             cohosts.append(rec['rrname'])
 
                 for co in cohosts:
-                    if eventName == "IP_ADDRESS" and (self.opts['verify'] and not self.validateIP(co, eventData)):
+                    if eventName == "IP_ADDRESS" and (self.opts['verify'] and not self.sf.validateIP(co, eventData)):
                         self.sf.debug("Host no longer resolves to our IP.")
                         continue
 

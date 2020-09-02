@@ -10,15 +10,47 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import json
 import base64
-from datetime import datetime
+import json
 import time
+from datetime import datetime
+
 from netaddr import IPNetwork
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_censys(SpiderFootPlugin):
-    """Censys:Investigate,Passive:Search Engines:apikey:Obtain information from Censys.io"""
+
+    meta = {
+        'name': "Censys",
+        'summary': "Obtain information from Censys.io",
+        'flags': ["apikey"],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Search Engines"],
+        'dataSource': {
+            'website': "https://censys.io/",
+            'model': "FREE_AUTH_LIMITED",
+            'references': [
+                "https://censys.io/api",
+                "https://censys.io/product",
+                "https://censys.io/ipv4"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://censys.io/",
+                "Register a free account",
+                "Navigate to https://censys.io/account",
+                "Click on 'API'",
+                "The API key combination is listed under 'API ID' and 'Secret'"
+            ],
+            'favIcon': "https://censys.io/assets/favicon.png",
+            'logo': "https://censys.io/assets/logo.png",
+            'description': "Discover exposures and other common entry points for attackers.\n"
+                               "Censys scans the entire internet constantly, including obscure ports. "
+                               "We use a combination of banner grabs and deep protocol handshakes "
+                               "to provide industry-leading visibility and an accurate depiction of what is live on the internet.",
+        }
+    }
 
     # Default options
     opts = {
@@ -47,7 +79,7 @@ class sfp_censys(SpiderFootPlugin):
 
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -56,7 +88,7 @@ class sfp_censys(SpiderFootPlugin):
 
     # What events this module produces
     def producedEvents(self):
-        return ["BGP_AS_MEMBER", "TCP_PORT_OPEN", "OPERATING_SYSTEM", 
+        return ["BGP_AS_MEMBER", "TCP_PORT_OPEN", "OPERATING_SYSTEM",
                 "WEBSERVER_HTTPHEADERS", "NETBLOCK_MEMBER", "GEOINFO",
                 'RAW_RIR_DATA']
 
@@ -67,11 +99,15 @@ class sfp_censys(SpiderFootPlugin):
             querytype = "ipv4/{0}"
         if querytype == "host":
             querytype = "websites/{0}"
-        
+
+        secret = self.opts['censys_api_key_uid'] + ':' + self.opts['censys_api_key_secret']
+        b64_val = base64.b64encode(secret.encode('utf-8'))
+
         headers = {
-            'Authorization': "Basic " + base64.b64encode(self.opts['censys_api_key_uid'] + ":" + self.opts['censys_api_key_secret'])
+            'Authorization': 'Basic %s' % b64_val.decode('utf-8')
         }
-        res = self.sf.fetchUrl('https://censys.io/api/v1/view/' + querytype.format(qry.encode('utf-8', errors='replace')),
+
+        res = self.sf.fetchUrl('https://censys.io/api/v1/view/' + querytype.format(qry),
                                timeout=self.opts['_fetchtimeout'],
                                useragent="SpiderFoot",
                                headers=headers)
@@ -79,7 +115,7 @@ class sfp_censys(SpiderFootPlugin):
         # API rate limit: 0.4 actions/second (120.0 per 5 minute interval)
         time.sleep(self.opts['delay'])
 
-        if res['code'] in [ "400", "429", "500", "403" ]:
+        if res['code'] in ["400", "429", "500", "403"]:
             self.sf.error("Censys.io API key seems to have been rejected or you have exceeded usage limits for the month.", False)
             self.errorState = True
             return None
@@ -91,7 +127,7 @@ class sfp_censys(SpiderFootPlugin):
         try:
             info = json.loads(res['content'])
         except Exception as e:
-            self.sf.error("Error processing JSON response from Censys.io.", False)
+            self.sf.error(f"Error processing JSON response from Censys.io: {e}", False)
             return None
 
         #print(str(info))
@@ -106,7 +142,7 @@ class sfp_censys(SpiderFootPlugin):
         if self.errorState:
             return None
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if self.opts['censys_api_key_uid'] == "" or self.opts['censys_api_key_secret'] == "":
             self.sf.error("You enabled sfp_censys but did not set an API uid/secret!", False)
@@ -115,7 +151,7 @@ class sfp_censys(SpiderFootPlugin):
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
 
         self.results[eventData] = True
@@ -132,7 +168,7 @@ class sfp_censys(SpiderFootPlugin):
             if self.checkForStop():
                 return None
 
-            if eventName in ["IP_ADDRESS", "NETLBLOCK_OWNER"]:
+            if eventName in ["IP_ADDRESS", "NETBLOCK_OWNER"]:
                 qtype = "ip"
             else:
                 qtype = "host"
@@ -141,8 +177,6 @@ class sfp_censys(SpiderFootPlugin):
 
             if rec is None:
                 continue
-
-            self.sf.debug("Censys raw data: " + str(rec))
 
             if 'error' in rec:
                 if rec['error_type'] == "unknown":
@@ -153,12 +187,20 @@ class sfp_censys(SpiderFootPlugin):
 
             self.sf.debug("Found results in Censys.io")
 
-            e = SpiderFootEvent("RAW_RIR_DATA", str(rec), self.__name__, event)
+            # For netblocks, we need to create the IP address event so that
+            # the threat intel event is more meaningful.
+            if eventName.startswith('NETBLOCK_'):
+                pevent = SpiderFootEvent("IP_ADDRESS", addr, self.__name__, event)
+                self.notifyListeners(pevent)
+            else:
+                pevent = event
+
+            e = SpiderFootEvent("RAW_RIR_DATA", str(rec), self.__name__, pevent)
             self.notifyListeners(e)
 
             try:
                 # Date format: 2016-12-24T07:25:35+00:00'
-                created_dt = datetime.strptime(rec.get('updated_at'), '%Y-%m-%dT%H:%M:%S+00:00')
+                created_dt = datetime.strptime(rec.get('updated_at', "1970-01-01T00:00:00+00:00"), '%Y-%m-%dT%H:%M:%S+00:00')
                 created_ts = int(time.mktime(created_dt.timetuple()))
                 age_limit_ts = int(time.time()) - (86400 * self.opts['age_limit_days'])
 
@@ -167,23 +209,24 @@ class sfp_censys(SpiderFootPlugin):
                     continue
 
                 if 'location' in rec:
-                    dat = rec['location'].get('country')
-                    if dat:
-                        e = SpiderFootEvent("GEOINFO", dat, self.__name__, event)
+                    location = ', '.join([_f for _f in [rec['location'].get('city'), rec['location'].get('province'), rec['location'].get('postal_code'), rec['location'].get('country')] if _f])
+                    if location:
+                        e = SpiderFootEvent("GEOINFO", location, self.__name__, pevent)
                         self.notifyListeners(e)
 
                 if 'headers' in rec:
                     dat = json.dumps(rec['headers'], ensure_ascii=False)
-                    e = SpiderFootEvent("WEBSERVER_HTTPHEADERS", dat, self.__name__, event)
+                    e = SpiderFootEvent("WEBSERVER_HTTPHEADERS", dat, self.__name__, pevent)
+                    e.actualSource = addr
                     self.notifyListeners(e)
 
                 if 'autonomous_system' in rec:
                     dat = str(rec['autonomous_system']['asn'])
-                    e = SpiderFootEvent("BGP_AS_MEMBER", dat, self.__name__, event)
+                    e = SpiderFootEvent("BGP_AS_MEMBER", dat, self.__name__, pevent)
                     self.notifyListeners(e)
 
                     dat = rec['autonomous_system']['routed_prefix']
-                    e = SpiderFootEvent("NETBLOCK_MEMBER", dat, self.__name__, event)
+                    e = SpiderFootEvent("NETBLOCK_MEMBER", dat, self.__name__, pevent)
                     self.notifyListeners(e)
 
                 if 'protocols' in rec:
@@ -191,15 +234,15 @@ class sfp_censys(SpiderFootPlugin):
                         if 'ip' not in rec:
                             continue
                         dat = rec['ip'] + ":" + p.split("/")[0]
-                        e = SpiderFootEvent("TCP_PORT_OPEN", dat, self.__name__, event)
+                        e = SpiderFootEvent("TCP_PORT_OPEN", dat, self.__name__, pevent)
                         self.notifyListeners(e)
 
                 if 'metadata' in rec:
                     if 'os_description' in rec['metadata']:
                         dat = rec['metadata']['os_description']
-                        e = SpiderFootEvent("OPERATING_SYSTEM", dat, self.__name__, event)
+                        e = SpiderFootEvent("OPERATING_SYSTEM", dat, self.__name__, pevent)
                         self.notifyListeners(e)
             except BaseException as e:
                 self.sf.error("Error encountered processing record for " + eventData + " (" + str(e) + ")", False)
-        
+
 # End of sfp_censys class

@@ -10,28 +10,48 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-from netaddr import IPAddress, IPNetwork
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from netaddr import IPAddress, IPNetwork
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 malchecks = {
-   'VXVault Malicious URL List': {
+    'VXVault Malicious URL List': {
         'id': '_vxvault',
-        'type': 'list',
         'checks': ['ip', 'domain'],
         'url': 'http://vxvault.net/URL_List.php',
-        'regex': '.*\/{0}/.*'
+        'regex': r'.*\/{0}/.*'
     }
 }
 
 
 class sfp_vxvault(SpiderFootPlugin):
-    """VXVault.net:Investigate,Passive:Reputation Systems::Check if a domain or IP is malicious according to VXVault.net."""
 
+    meta = {
+        'name': "VXVault.net",
+        'summary': "Check if a domain or IP is malicious according to VXVault.net.",
+        'flags': [""],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "http://vxvault.net/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "http://vxvault.net/URL_List.php",
+                "https://github.com/InfectedPacket/VxVault"
+            ],
+            'favIcon': "",
+            'logo': "",
+            'description': "VxVault is a malware management program to automatically download and classify malware samples. "
+                                "VxVault downloads malware samples from links from online sources such as webpages or RSS feeds, "
+                                "downloads them and attempts to identify the malware using VirusTotal. "
+                                "It then sort the malware onto a local file system and into a SQLite database.",
+        }
+    }
 
     # Default options
     opts = {
-        '_vxvault': True,
         'checkaffiliates': True,
         'checkcohosts': True,
         'cacheperiod': 18
@@ -47,16 +67,16 @@ class sfp_vxvault(SpiderFootPlugin):
     # Be sure to completely clear any class variables in setup()
     # or you run the risk of data persisting between scan runs.
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -74,54 +94,18 @@ class sfp_vxvault(SpiderFootPlugin):
                 "MALICIOUS_AFFILIATE_IPADDR", "MALICIOUS_AFFILIATE_INTERNET_NAME",
                 "MALICIOUS_COHOST"]
 
-    # Check the regexps to see whether the content indicates maliciousness
-    def contentMalicious(self, content, goodregex, badregex):
-        # First, check for the bad indicators
-        if len(badregex) > 0:
-            for rx in badregex:
-                if re.match(rx, content, re.IGNORECASE | re.DOTALL):
-                    self.sf.debug("Found to be bad against bad regex: " + rx)
-                    return True
-
-        # Finally, check for good indicators
-        if len(goodregex) > 0:
-            for rx in goodregex:
-                if re.match(rx, content, re.IGNORECASE | re.DOTALL):
-                    self.sf.debug("Found to be good againt good regex: " + rx)
-                    return False
-
-        # If nothing was matched, reply None
-        self.sf.debug("Neither good nor bad, unknown.")
-        return None
-
-    # Look up 'query' type sources
-    def resourceQuery(self, id, target, targetType):
-        self.sf.debug("Querying " + id + " for maliciousness of " + target)
-        for check in malchecks.keys():
-            cid = malchecks[check]['id']
-            if id == cid and malchecks[check]['type'] == "query":
-                url = unicode(malchecks[check]['url'])
-                res = self.sf.fetchUrl(url.format(target), timeout=self.opts['_fetchtimeout'], useragent=self.opts['_useragent'])
-                if res['content'] is None:
-                    self.sf.error("Unable to fetch " + url.format(target), False)
-                    return None
-                if self.contentMalicious(res['content'],
-                                         malchecks[check]['goodregex'],
-                                         malchecks[check]['badregex']):
-                    return url.format(target)
-
-        return None
-
     # Look up 'list' type resources
     def resourceList(self, id, target, targetType):
         targetDom = ''
         # Get the base domain if we're supplied a domain
         if targetType == "domain":
             targetDom = self.sf.hostDomain(target, self.opts['_internettlds'])
+            if not targetDom:
+                return None
 
-        for check in malchecks.keys():
+        for check in list(malchecks.keys()):
             cid = malchecks[check]['id']
-            if id == cid and malchecks[check]['type'] == "list":
+            if id == cid:
                 data = dict()
                 url = malchecks[check]['url']
                 data['content'] = self.sf.cacheGet("sfmal_" + cid, self.opts.get('cacheperiod', 0))
@@ -136,12 +120,11 @@ class sfp_vxvault(SpiderFootPlugin):
                 # If we're looking at netblocks
                 if targetType == "netblock":
                     iplist = list()
-                    # Get the regex, replace {0} with an IP address matcher to 
+                    # Get the regex, replace {0} with an IP address matcher to
                     # build a list of IP.
                     # Cycle through each IP and check if it's in the netblock.
                     if 'regex' in malchecks[check]:
-                        rx = malchecks[check]['regex'].replace("{0}",
-                                                               "(\d+\.\d+\.\d+\.\d+)")
+                        rx = malchecks[check]['regex'].replace("{0}", r"(\d+\.\d+\.\d+\.\d+)")
                         pat = re.compile(rx, re.IGNORECASE)
                         self.sf.debug("New regex for " + check + ": " + rx)
                         for line in data['content'].split('\n'):
@@ -159,11 +142,10 @@ class sfp_vxvault(SpiderFootPlugin):
 
                         try:
                             if IPAddress(ip) in IPNetwork(target):
-                                self.sf.debug(ip + " found within netblock/subnet " +
-                                              target + " in " + check)
+                                self.sf.debug(f"{ip} found within netblock/subnet {target} in {check}")
                                 return url
                         except Exception as e:
-                            self.sf.debug("Error encountered parsing: " + str(e))
+                            self.sf.debug(f"Error encountered parsing: {e}")
                             continue
 
                     return None
@@ -177,8 +159,8 @@ class sfp_vxvault(SpiderFootPlugin):
                 else:
                     # Check for the domain and the hostname
                     try:
-                        rxDom = unicode(malchecks[check]['regex']).format(targetDom)
-                        rxTgt = unicode(malchecks[check]['regex']).format(target)
+                        rxDom = str(malchecks[check]['regex']).format(targetDom)
+                        rxTgt = str(malchecks[check]['regex']).format(target)
                         for line in data['content'].split('\n'):
                             if (targetType == "domain" and re.match(rxDom, line, re.IGNORECASE)) or \
                                     re.match(rxTgt, line, re.IGNORECASE):
@@ -191,15 +173,11 @@ class sfp_vxvault(SpiderFootPlugin):
         return None
 
     def lookupItem(self, resourceId, itemType, target):
-        for check in malchecks.keys():
+        for check in list(malchecks.keys()):
             cid = malchecks[check]['id']
             if cid == resourceId and itemType in malchecks[check]['checks']:
-                self.sf.debug("Checking maliciousness of " + target + " (" +
-                              itemType + ") with: " + cid)
-                if malchecks[check]['type'] == "query":
-                    return self.resourceQuery(cid, target, itemType)
-                if malchecks[check]['type'] == "list":
-                    return self.resourceList(cid, target, itemType)
+                self.sf.debug("Checking maliciousness of " + target + " (" + itemType + ") with: " + cid)
+                return self.resourceList(cid, target, itemType)
 
         return None
 
@@ -209,13 +187,13 @@ class sfp_vxvault(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + ", already checked.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
-        else:
-            self.results[eventData] = True
+
+        self.results[eventData] = True
 
         if eventName == 'CO_HOSTED_SITE' and not self.opts.get('checkcohosts', False):
             return None
@@ -223,40 +201,40 @@ class sfp_vxvault(SpiderFootPlugin):
                 and not self.opts.get('checkaffiliates', False):
             return None
 
-        for check in malchecks.keys():
+        for check in list(malchecks.keys()):
             cid = malchecks[check]['id']
-            # If the module is enabled..
-            if self.opts[cid]:
-                if eventName in ['IP_ADDRESS', 'AFFILIATE_IPADDR']:
-                    typeId = 'ip'
-                    if eventName == 'IP_ADDRESS':
-                        evtType = 'MALICIOUS_IPADDR'
-                    else:
-                        evtType = 'MALICIOUS_AFFILIATE_IPADDR'
 
-                if eventName in ['BGP_AS_OWNER', 'BGP_AS_MEMBER']:
-                    typeId = 'asn'
-                    evtType = 'MALICIOUS_ASN'
+            if eventName in ['IP_ADDRESS', 'AFFILIATE_IPADDR']:
+                typeId = 'ip'
+                if eventName == 'IP_ADDRESS':
+                    evtType = 'MALICIOUS_IPADDR'
+                else:
+                    evtType = 'MALICIOUS_AFFILIATE_IPADDR'
 
-                if eventName in ['INTERNET_NAME', 'CO_HOSTED_SITE',
-                                 'AFFILIATE_INTERNET_NAME', ]:
-                    typeId = 'domain'
-                    if eventName == "INTERNET_NAME":
-                        evtType = "MALICIOUS_INTERNET_NAME"
-                    if eventName == 'AFFILIATE_INTERNET_NAME':
-                        evtType = 'MALICIOUS_AFFILIATE_INTERNET_NAME'
-                    if eventName == 'CO_HOSTED_SITE':
-                        evtType = 'MALICIOUS_COHOST'
+            if eventName in ['BGP_AS_OWNER', 'BGP_AS_MEMBER']:
+                typeId = 'asn'
+                evtType = 'MALICIOUS_ASN'
 
-                url = self.lookupItem(cid, typeId, eventData)
-                if self.checkForStop():
-                    return None
+            if eventName in ['INTERNET_NAME', 'CO_HOSTED_SITE',
+                             'AFFILIATE_INTERNET_NAME']:
+                typeId = 'domain'
+                if eventName == "INTERNET_NAME":
+                    evtType = "MALICIOUS_INTERNET_NAME"
+                if eventName == 'AFFILIATE_INTERNET_NAME':
+                    evtType = 'MALICIOUS_AFFILIATE_INTERNET_NAME'
+                if eventName == 'CO_HOSTED_SITE':
+                    evtType = 'MALICIOUS_COHOST'
 
-                # Notify other modules of what you've found
-                if url is not None:
-                    text = check + " [" + eventData + "]\n" + "<SFURL>" + url + "</SFURL>"
-                    evt = SpiderFootEvent(evtType, text, self.__name__, event)
-                    self.notifyListeners(evt)
+            url = self.lookupItem(cid, typeId, eventData)
+
+            if self.checkForStop():
+                return None
+
+            # Notify other modules of what you've found
+            if url is not None:
+                text = f"{check} [{eventData}]\n<SFURL>{url}</SFURL>"
+                evt = SpiderFootEvent(evtType, text, self.__name__, event)
+                self.notifyListeners(evt)
 
         return None
 

@@ -11,13 +11,22 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import whois
 import ipwhois
+import whois
 from netaddr import IPAddress
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_whois(SpiderFootPlugin):
-    """Whois:Footprint,Investigate,Passive:Public Registries::Perform a WHOIS look-up on domain names and owned netblocks."""
+
+    meta = {
+        'name': "Whois",
+        'summary': "Perform a WHOIS look-up on domain names and owned netblocks.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Public Registries"]
+    }
 
     # Default options
     opts = {
@@ -27,19 +36,19 @@ class sfp_whois(SpiderFootPlugin):
     optdescs = {
     }
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
         return ["DOMAIN_NAME", "DOMAIN_NAME_PARENT", "NETBLOCK_OWNER",
-                "CO_HOSTED_SITE_DOMAIN", "AFFILIATE_DOMAIN", "SIMILARDOMAIN" ]
+                "CO_HOSTED_SITE_DOMAIN", "AFFILIATE_DOMAIN_NAME", "SIMILARDOMAIN"]
 
     # What events this module produces
     # This is to support the end user in selecting modules based on events
@@ -60,7 +69,7 @@ class sfp_whois(SpiderFootPlugin):
         else:
             self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         try:
             data = None
@@ -92,7 +101,7 @@ class sfp_whois(SpiderFootPlugin):
             typ = "DOMAIN_WHOIS"
         if eventName.startswith("NETBLOCK"):
             typ = "NETBLOCK_WHOIS"
-        if eventName.startswith("AFFILIATE_DOMAIN"):
+        if eventName.startswith("AFFILIATE_DOMAIN_NAME"):
             typ = "AFFILIATE_DOMAIN_WHOIS"
         if eventName.startswith("CO_HOSTED_SITE_DOMAIN"):
             typ = "CO_HOSTED_SITE_DOMAIN_WHOIS"
@@ -102,7 +111,7 @@ class sfp_whois(SpiderFootPlugin):
         rawevt = SpiderFootEvent(typ, data, self.__name__, event)
         self.notifyListeners(rawevt)
 
-        if whoisdata.has_key('registrar'):
+        if 'registrar' in whoisdata:
             if eventName.startswith("DOMAIN_NAME") and whoisdata['registrar'] is not None:
                 evt = SpiderFootEvent("DOMAIN_REGISTRAR", whoisdata['registrar'],
                                       self.__name__, event)

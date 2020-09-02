@@ -12,13 +12,43 @@
 
 import json
 import time
-import socket
+
 from netaddr import IPNetwork
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_binaryedge(SpiderFootPlugin):
-    """BinaryEdge:Footprint,Investigate,Passive:Search Engines:apikey:Obtain information from BinaryEdge.io's Internet scanning systems about breaches, vulerabilities, torrents and passive DNS."""
 
+    meta = {
+        'name': "BinaryEdge",
+        'summary': "Obtain information from BinaryEdge.io's Internet scanning systems about breaches, vulerabilities, torrents and passive DNS.",
+        'flags': ["apikey"],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Search Engines"],
+        'dataSource': {
+            'website': "https://www.binaryedge.io/",
+            'model': "FREE_AUTH_LIMITED",
+            'references': [
+                "https://docs.binaryedge.io/",
+                "https://www.binaryedge.io/data.html"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://www.binaryedge.io/pricing.html",
+                "Select a plan",
+                "Sign up with new account",
+                "Go to Account",
+                "The API key is listed under 'API Access'"
+            ],
+            'favIcon': "https://www.binaryedge.io/img/favicon/favicon-32x32.png",
+            'logo': "https://www.binaryedge.io/img/logo.png",
+            'description': "We scan the entire public internet, create real-time threat intelligence streams, "
+                                "and reports that show the exposure of what is connected to the Internet.\n"
+                                "We have built a distributed platform of scanners and honeypots, to acquire, classify and correlate different types of data.\n"
+                                "We use all of these datapoints to match those digital assets to an organization, "
+                                "allowing us to provide a global, up-to-date, view of organizations known and unknown assets.",
+        }
+    }
 
     # Default options
     opts = {
@@ -70,38 +100,22 @@ class sfp_binaryedge(SpiderFootPlugin):
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return ["IP_ADDRESS", "DOMAIN_NAME", "EMAILADDR", 
-                "NETBLOCK_OWNER", "NETBLOCK_MEMBER" ]
+        return ["IP_ADDRESS", "DOMAIN_NAME", "EMAILADDR",
+                "NETBLOCK_OWNER", "NETBLOCK_MEMBER"]
 
     # What events this module produces
     def producedEvents(self):
         return ["INTERNET_NAME", "VULNERABILITY", "TCP_PORT_OPEN",
-                "TCP_PORT_OPEN_BANNER", "EMAILADDR_COMPROMISED", 
-                "UDP_PORT_OPEN", "UDP_PORT_OPEN_INFO",
+                "TCP_PORT_OPEN_BANNER", "EMAILADDR_COMPROMISED",
+                "UDP_PORT_OPEN", "UDP_PORT_OPEN_INFO", "DOMAIN_NAME",
                 "CO_HOSTED_SITE", "MALICIOUS_IPADDR"]
 
-    # Verify a host resolves
-    def resolveHost(self, host):
-        try:
-            # IDNA-encode the hostname in case it contains unicode
-            if type(host) != unicode:
-                host = unicode(host, "utf-8", errors='replace').encode("idna")
-            else:
-                host = host.encode("idna")
-
-            addrs = socket.gethostbyname_ex(host)
-            return True
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + host + ": " + str(e))
-            return False
-
     def query(self, qry, querytype, page=1):
-        ret = None
         retarr = list()
 
         if self.errorState:
@@ -119,16 +133,16 @@ class sfp_binaryedge(SpiderFootPlugin):
             queryurl = "/v2/query/domains/subdomain/{0}?page={1}"
         if querytype == "passive":
             queryurl = "/v2/query/domains/ip/{0}?page={1}"
-        
+
         binaryedgeurl = "https://api.binaryedge.io"
         headers = {
             'X-Key': self.opts['binaryedge_api_key']
         }
-        url = binaryedgeurl + queryurl.format(qry.encode('utf-8', errors='replace'), page)
-        res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'], 
+        url = binaryedgeurl + queryurl.format(qry, page)
+        res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'],
                                useragent="SpiderFoot", headers=headers)
 
-        if res['code'] in [ "429", "500" ]:
+        if res['code'] in ["429", "500"]:
             self.sf.error("BinaryEdge.io API key seems to have been rejected or you have exceeded usage limits for the month.", False)
             self.errorState = True
             return None
@@ -144,7 +158,7 @@ class sfp_binaryedge(SpiderFootPlugin):
         try:
             info = json.loads(res['content'])
         except Exception as e:
-            self.sf.error("Error processing JSON response from BinaryEdge.io.", False)
+            self.sf.error(f"Error processing JSON response from BinaryEdge.io: {e}", False)
             return None
 
         if info.get('page') and info['total'] > info.get('pagesize', 100) * info.get('page', 0):
@@ -170,7 +184,7 @@ class sfp_binaryedge(SpiderFootPlugin):
         if self.errorState:
             return None
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if self.opts['binaryedge_api_key'] == "":
             self.sf.error("You enabled sfp_binaryedge but did not set an API key!", False)
@@ -179,7 +193,7 @@ class sfp_binaryedge(SpiderFootPlugin):
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
         else:
             self.results[eventData] = True
@@ -232,10 +246,14 @@ class sfp_binaryedge(SpiderFootPlugin):
                         continue
                     if self.getTarget().matches(host, includeParents=True):
                         if self.opts['verify']:
-                            if not self.resolveHost(host):
+                            if not self.sf.resolveHost(host):
                                 continue
                         evt = SpiderFootEvent("INTERNET_NAME", host, self.__name__, event)
                         self.notifyListeners(evt)
+                        if self.sf.isDomain(host, self.opts['_internettlds']):
+                            evt = SpiderFootEvent("DOMAIN_NAME", host, self.__name__, event)
+                            self.notifyListeners(evt)
+
                         self.reportedhosts[host] = True
                         continue
 
@@ -258,7 +276,7 @@ class sfp_binaryedge(SpiderFootPlugin):
                 self.sf.debug("Found compromised account results in BinaryEdge.io")
                 res = rec["events"]
                 for rec in res:
-                    e = SpiderFootEvent(evtType, rec, self.__name__, event)
+                    e = SpiderFootEvent(evtType, eventData + " [" + rec + "]", self.__name__, event)
                     self.notifyListeners(e)
 
         if eventName == "DOMAIN_NAME":
@@ -280,7 +298,7 @@ class sfp_binaryedge(SpiderFootPlugin):
                     else:
                         self.reportedhosts[rec] = True
                     if self.opts['verify']:
-                        if not self.resolveHost(rec):
+                        if not self.sf.resolveHost(rec):
                             self.sf.debug("Couldn't resolve " + rec + ", so skipping.")
                             continue
                     e = SpiderFootEvent(evtType, rec, self.__name__, event)
@@ -390,7 +408,7 @@ class sfp_binaryedge(SpiderFootPlugin):
                             banner = prec['result']['data']['service']['banner']
                             e = SpiderFootEvent(evtbtype, banner, self.__name__, ev)
                             self.notifyListeners(e)
-                        except BaseException as e:
+                        except BaseException:
                             self.sf.debug("No banner information found.")
 
         for addr in qrylist:

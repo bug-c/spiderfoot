@@ -11,15 +11,17 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-try:
-    import re2 as re
-except ImportError:
-    import re
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
 
 class sfp_email(SpiderFootPlugin):
-    """E-Mail:Footprint,Investigate,Passive:Content Analysis::Identify e-mail addresses in any obtained data."""
+
+    meta = {
+        'name': "E-Mail Address Extractor",
+        'summary': "Identify e-mail addresses in any obtained data.",
+        'useCases': ["Passive", "Investigate", "Footprint"],
+        'categories': ["Content Analysis"]
+    }
 
     # Default options
     opts = {
@@ -49,7 +51,7 @@ class sfp_email(SpiderFootPlugin):
     # This is to support the end user in selecting modules based on events
     # produced.
     def producedEvents(self):
-        return ["EMAILADDR", "AFFILIATE_EMAILADDR"]
+        return ["EMAILADDR", "EMAILADDR_GENERIC", "AFFILIATE_EMAILADDR"]
 
     # Handle events sent to this module
     def handleEvent(self, event):
@@ -57,42 +59,38 @@ class sfp_email(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
-        pat = re.compile("([\%a-zA-Z\.0-9_\-\+]+@[a-zA-Z\.0-9\-]+\.[a-zA-Z\.0-9\-]+)")
-        matches = re.findall(pat, eventData)
+        emails = self.sf.parseEmails(eventData)
         myres = list()
-        for match in matches:
+        for email in emails:
             evttype = "EMAILADDR"
-            if len(match) < 4:
-                self.sf.debug("Likely invalid address: " + match)
-                continue
-
-            # Handle messed up encodings
-            if "%" in match:
-                self.sf.debug("Skipped address: " + match)
-                continue
+            email = email.lower()
 
             # Get the domain and strip potential ending .
-            mailDom = match.lower().split('@')[1].strip('.')
-            if not self.getTarget().matches(mailDom) and not self.getTarget().matches(match):
+            mailDom = email.split('@')[1].strip('.')
+            if not self.sf.validHost(mailDom, self.opts['_internettlds']):
+                self.sf.debug("Skipping " + email + " as not a valid e-mail.")
+                return None
+
+            if not self.getTarget().matches(mailDom, includeChildren=True, includeParents=True) and not self.getTarget().matches(email):
                 self.sf.debug("External domain, so possible affiliate e-mail")
                 evttype = "AFFILIATE_EMAILADDR"
 
             if eventName.startswith("AFFILIATE_"):
                 evttype = "AFFILIATE_EMAILADDR"
 
-            self.sf.info("Found e-mail address: " + match)
-            if type(match) == str:
-                mail = unicode(match.strip('.'), 'utf-8', errors='replace')
-            else:
-                mail = match.strip('.')
+            if not evttype.startswith("AFFILIATE_") and email.split("@")[0] in self.opts['_genericusers'].split(","):
+                evttype = "EMAILADDR_GENERIC"
+
+            self.sf.info("Found e-mail address: " + email)
+            mail = email.strip('.')
 
             if mail in myres:
                 self.sf.debug("Already found from this source.")
                 continue
-            else:
-                myres.append(mail)
+
+            myres.append(mail)
 
             evt = SpiderFootEvent(evttype, mail, self.__name__, event)
             if event.moduleDataSource:

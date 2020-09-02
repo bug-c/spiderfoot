@@ -11,25 +11,32 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-try:
-    import re2 as re
-except ImportError:
-    import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+import re
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_ethereum(SpiderFootPlugin):
-    """Ethereum Finder:Footprint,Investigate:Content Analysis::Identify ethereum addresses in scraped webpages."""
+
+    meta = {
+        'name': "Ethereum Address Extractor",
+        'summary': "Identify ethereum addresses in scraped webpages.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Content Analysis"]
+    }
 
     # Default options
     opts = {}
+    optdescs = {}
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -54,10 +61,10 @@ class sfp_ethereum(SpiderFootPlugin):
         else:
             self.results[sourceData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # thanks to https://stackoverflow.com/questions/21683680/regex-to-match-ethereum-addresses
-        matches = re.findall("[\s:=\>](0x[a-fA-F0-9]{40})", eventData)
+        matches = re.findall(r"[\s:=\>](0x[a-fA-F0-9]{40})", eventData)
         for m in matches:
             self.sf.debug("Ethereum address match: " + m)
             evt = SpiderFootEvent("ETHEREUM_ADDRESS", m, self.__name__, event)

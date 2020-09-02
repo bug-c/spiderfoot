@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # -------------------------------------------------------------------------------
-# Name:         sfp_citadel
-# Purpose:      SpiderFoot plug-in to search citadel.pw using their API, for
-#               potential data breaches.
+# Name:        sfp_citadel
+# Purpose:     SpiderFoot plug-in to search Leak-Lookup using their API,
+#              for potential data breaches.
 #
 # Author:      sn <citadel.pw@protonmail.com>
 #
@@ -11,10 +11,48 @@
 # -------------------------------------------------------------------------------
 
 import json
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_citadel(SpiderFootPlugin):
-    """Citadel Engine:Footprint,Investigate,Passive:Leaks, Dumps and Breaches:apikey:Searches Leak-Lookup.com's database of breaches."""
+
+    meta = {
+        'name': "Leak-Lookup",
+        'summary': "Searches Leak-Lookup.com's database of breaches.",
+        'flags': ["apikey"],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Leaks, Dumps and Breaches"],
+        'dataSource': {
+            'website': "https://leak-lookup.com/",
+            'model': "FREE_AUTH_UNLIMITED",
+            'references': [
+                "https://leak-lookup.com/api",
+                "https://leak-lookup.com/databases"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://leak-lookup.com",
+                "Register an account",
+                "Login to your account",
+                "Click on 'Account'",
+                "Click on 'API'",
+                "The API key is listed under 'API Key'"
+            ],
+            'favIcon': "https://leak-lookup.com/favicon.png",
+            'logo': "https://leak-lookup.com/favicon.png",
+            'description': "Leak-Lookup allows you to search across thousands of data breaches "
+                                "to stay on top of credentials that may have been compromised in the wild.\n"
+                                "The creators came together when they realized they had a vast trove of data "
+                                "that could be of great value to pen-testers seeking weaknesses in client passwords "
+                                "and those concerned about which of their credentials have been leaked into the wild.\n"
+                                "Always looking forward, Leak-Lookup invests all of its profits back into securing the "
+                                "latest data breaches and leaks / dumps as they become available, ensuring that "
+                                "as well as historical data, Leak-Lookup becomes a field leader in credential monitoring.",
+        }
+    }
 
     # Default options
     opts = {
@@ -26,14 +64,14 @@ class sfp_citadel(SpiderFootPlugin):
         "timeout": "Custom timeout due to heavy traffic at times."
     }
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.__dataSource__ = "Leak-Lookup.com"
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -46,50 +84,77 @@ class sfp_citadel(SpiderFootPlugin):
     def producedEvents(self):
         return ["EMAILADDR_COMPROMISED"]
 
+    # Query email address
+    # https://leak-lookup.com/api
+    def queryEmail(self, email):
+        apikey = self.opts['api_key']
+
+        if not apikey:
+            # Public API key
+            apikey = "3edfb5603418f101926c64ca5dd0e409"
+
+        params = {
+            'query': email.encode('raw_unicode_escape').decode("ascii", errors='replace'),
+            'type': 'email_address',
+            'key': apikey
+        }
+
+        res = self.sf.fetchUrl("https://leak-lookup.com/api/search",
+                               postData=urllib.parse.urlencode(params),
+                               timeout=self.opts['timeout'],
+                               useragent=self.opts['_useragent'])
+
+        if res['content'] is None:
+            self.sf.debug('No response from Leak-Lookup.com')
+            return None
+
+        try:
+            data = json.loads(res['content'])
+        except BaseException as e:
+            self.sf.debug(f"Error processing JSON response: {e}")
+            return None
+
+        return data
+
     # Handle events sent to this module
     def handleEvent(self, event):
         eventName = event.eventType
         srcModuleName = event.module
         eventData = event.data
 
-        try:
-            self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
-            
-	    # Don't look up stuff twice
-            if eventData in self.results:
-                self.sf.debug("Skipping " + eventData + " as already searched.")
-                return None
-            else:
-                self.results[eventData] = True
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
-            apikey = self.opts['api_key']
-            if not apikey:
-                # Public API key
-                apikey = "3edfb5603418f101926c64ca5dd0e409"
-            url = "https://leak-lookup.com/api/search"
-            postdata = "key={}&type=email_address&query={}".format( apikey, eventData ) 
- 
-            res = self.sf.fetchUrl(url, postData=postdata, timeout=self.opts['timeout'], 
-                                   useragent=self.opts['_useragent'])
-
-            if res['content'] is None or '"error": "true"' in res['content']:
-		errorMessage = json.loads(res['content'])["message"]
-                self.sf.error("Error encountered processing {}: {}".format( eventData, errorMessage ), False)
-                return None
-
-            data = json.loads(res['content'])
-
-            for site in data["message"]:
-                self.sf.info("Found Leak-Lookup entry for {}: {}".format( eventData, site ) )
-                evt = SpiderFootEvent( "EMAILADDR_COMPROMISED", "{} [{}]".format( eventData, site ), self.__name__, event )
-                self.notifyListeners(evt)
-            
+        if self.errorState:
             return None
-            
-        except Exception as ex:
-            template = "An exception of type {0} occurred. Arguments:\n{1!r}"
-            message = template.format(type(ex).__name__, ex.args)
-            self.sf.error(message, False)
+
+        # Don't look up stuff twice
+        if eventData in self.results:
+            self.sf.debug(f"Skipping {eventData}, already checked.")
+            return None
+
+        self.results[eventData] = True
+
+        data = self.queryEmail(eventData)
+
+        if data is None:
+            return None
+
+        error = data.get('error')
+        message = data.get('message')
+
+        if error == 'true':
+            self.sf.error(f"Error encountered processing {eventData}: {message}")
+            if "MISSING API" in message:
+                self.errorState = True
+                return None
+            return None
+
+        if not message:
+            return None
+
+        for site in message:
+            self.sf.info(f"Found Leak-Lookup entry for {eventData}: {site}")
+            evt = SpiderFootEvent("EMAILADDR_COMPROMISED", f"{eventData} [{site}]", self.__name__, event)
+            self.notifyListeners(evt)
 
 # End of sfp_citadel class
-

@@ -1,6 +1,6 @@
 #-------------------------------------------------------------------------------
 # Name:         sfp_h1.nobbd.de
-# Purpose:      Query the the unofficial HackerOne disclosure timeline database 
+# Purpose:      Query the the unofficial HackerOne disclosure timeline database
 #               to see if our target appears.
 #
 # Author:      Dhiraj Mishra <dhiraj@notsosecure.com>
@@ -10,10 +10,30 @@
 #-------------------------------------------------------------------------------
 
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_h1nobbdde(SpiderFootPlugin):
-    """HackerOne (Unofficial):Footprint,Investigate,Passive:Leaks, Dumps and Breaches::Check external vulnerability scanning/reporting service h1.nobbd.de to see if the target is listed."""
+
+    meta = {
+        'name': "HackerOne (Unofficial)",
+        'summary': "Check external vulnerability scanning/reporting service h1.nobbd.de to see if the target is listed.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Leaks, Dumps and Breaches"],
+        'dataSource': {
+            'website': "http://www.nobbd.de/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "http://www.nobbd.de/index.php#projekte",
+                "https://twitter.com/disclosedh1"
+            ],
+            'favIcon': "http://www.nobbd.de/favicon.ico",
+            'logo': "http://www.nobbd.de/favicon.ico",
+            'description': "Unofficial Bug Monitoring platform for HackerOne.",
+        }
+    }
 
     # Default options
     opts = {
@@ -26,18 +46,18 @@ class sfp_h1nobbdde(SpiderFootPlugin):
     # Be sure to completely clear any class variables in setup()
     # or you run the risk of data persisting between scan runs.
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
-	
+
     def watchedEvents(self):
         return ["DOMAIN_NAME"]
 
@@ -48,7 +68,6 @@ class sfp_h1nobbdde(SpiderFootPlugin):
     # Query h1.nobbd.de
     def queryOBB(self, qry):
         ret = list()
-        base = "http://www.h1.nobbd.de"
         url = "http://h1.nobbd.de/search.php?q=" + qry
         res = self.sf.fetchUrl(url, timeout=30, useragent=self.opts['_useragent'])
 
@@ -57,14 +76,15 @@ class sfp_h1nobbdde(SpiderFootPlugin):
             return None
 
         try:
-            rx = re.compile("<a class=\"title\" href=.(.[^\"]+).*?title=.(.[^\"\']+)", re.IGNORECASE|re.DOTALL)
+            rx = re.compile("<a class=\"title\" href=.(.[^\"]+).*?title=.(.[^\"\']+)", re.IGNORECASE | re.DOTALL)
             for m in rx.findall(res['content']):
                 # Report it
                 if qry in m[1]:
                     ret.append(m[1] + "\n<SFURL>" + m[0] + "</SFURL>")
         except Exception as e:
-            self.sf.error("Error processing response from h1.nobbd.de: " + str(e), False)
+            self.sf.error(f"Error processing response from h1.nobbd.de: {e}", False)
             return None
+
         return ret
 
     def handleEvent(self, event):
@@ -73,13 +93,13 @@ class sfp_h1nobbdde(SpiderFootPlugin):
         eventData = event.data
         data = list()
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
-        if self.results.has_key(eventData):
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+        if eventData in self.results:
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
-        else:
-            self.results[eventData] = True
+
+        self.results[eventData] = True
 
         obb = self.queryOBB(eventData)
         if obb:

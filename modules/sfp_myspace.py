@@ -10,36 +10,59 @@
 #-------------------------------------------------------------------------------
 
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_myspace(SpiderFootPlugin):
-    """MySpace:Footprint,Investigate,Passive:Social Media::Gather username and location from MySpace.com profiles."""
+
+    meta = {
+        'name': "MySpace",
+        'summary': "Gather username and location from MySpace.com profiles.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Social Media"],
+        'dataSource': {
+            'website': "https://myspace.com/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://www.programmableweb.com/api/myspace"
+            ],
+            'favIcon': "https://x.myspacecdn.com/new/common/images/favicons/favicon.ico",
+            'logo': "https://x.myspacecdn.com/new/common/images/favicons/114-Retina-iPhone.png",
+            'description': "Myspace is a place where people come to connect, discover, and share.\n"
+                                "Through an open design, compelling editorial features, "
+                                "and analytics-based recommendations, Myspace creates a creative community "
+                                "of people who connect around mutual affinity and inspiration for the purpose "
+                                "of shaping, sharing, and discovering what's next.",
+        }
+    }
 
     # Default options
-    opts = { 
+    opts = {
     }
 
     # Option descriptions
     optdescs = {
     }
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
         self.__dataSource__ = "MySpace.com"
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return [ "EMAILADDR", "SOCIAL_MEDIA" ]
+        return ["EMAILADDR", "SOCIAL_MEDIA"]
 
     # What events this module produces
     def producedEvents(self):
-        return [ "SOCIAL_MEDIA", "GEOINFO" ]
+        return ["SOCIAL_MEDIA", "GEOINFO"]
 
     # Handle events sent to this module
     def handleEvent(self, event):
@@ -52,13 +75,13 @@ class sfp_myspace(SpiderFootPlugin):
         else:
             self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Search by email address
         if eventName == "EMAILADDR":
             email = eventData
-            res = self.sf.fetchUrl("https://myspace.com/search/people?q=" + email, 
-                                   timeout=self.opts['_fetchtimeout'], 
+            res = self.sf.fetchUrl("https://myspace.com/search/people?q=" + email,
+                                   timeout=self.opts['_fetchtimeout'],
                                    useragent=self.opts['_useragent'])
 
             if res['content'] is None:
@@ -77,8 +100,8 @@ class sfp_myspace(SpiderFootPlugin):
 
             # Check for email address as name, at the risk of missed results.
             try:
-                matches = re.findall('<a href=\"\/([a-zA-Z0-9_]+)\".*[\&; :\"\#\*\(\"\'\;\,\>\.\?\!]+' + email + '[\&; :\"\#\*\)\"\'\;\,\<\.\?\!]+', profile, re.IGNORECASE)
-            except BaseException as e:
+                matches = re.findall(r'<a href=\"\/([a-zA-Z0-9_]+)\".*[\&; :\"\#\*\(\"\'\;\,\>\.\?\!]+' + email + r'[\&; :\"\#\*\)\"\'\;\,\<\.\?\!]+', profile, re.IGNORECASE)
+            except BaseException:
                 self.sf.debug("Malformed e-mail address, skipping.")
                 return None
 
@@ -87,7 +110,8 @@ class sfp_myspace(SpiderFootPlugin):
                 return None
 
             name = matches[0]
-            e = SpiderFootEvent("SOCIAL_MEDIA", "MySpace: " + "https://myspace.com/" + name, 
+            e = SpiderFootEvent("SOCIAL_MEDIA", "MySpace: " + \
+                                "<SFURL>https://myspace.com/" + name + "</SFURL>",
                                 self.__name__, event)
             self.notifyListeners(e)
 
@@ -95,7 +119,7 @@ class sfp_myspace(SpiderFootPlugin):
         if eventName == "SOCIAL_MEDIA":
             try:
                 network = eventData.split(": ")[0]
-                url = eventData.split(": ")[1]
+                url = eventData.split(": ")[1].replace("<SFURL>", "").replace("</SFURL>", "")
             except BaseException as e:
                 self.sf.error("Unable to parse SOCIAL_MEDIA: " +
                               eventData + " (" + str(e) + ")", False)
@@ -106,7 +130,7 @@ class sfp_myspace(SpiderFootPlugin):
                               ", as not a MySpace profile")
                 return None
 
-            res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'], 
+            res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'],
                                    useragent=self.opts['_useragent'])
 
             if res['content'] is None:
@@ -120,8 +144,8 @@ class sfp_myspace(SpiderFootPlugin):
             location = data[0]
 
             if len(location) < 5 or len(location) > 100:
-               self.sf.debug("Skipping likely invalid location.")
-               return None
+                self.sf.debug("Skipping likely invalid location.")
+                return None
 
             e = SpiderFootEvent("GEOINFO", location, self.__name__, event)
             self.notifyListeners(e)

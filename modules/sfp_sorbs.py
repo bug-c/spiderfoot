@@ -12,14 +12,37 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import socket
 from netaddr import IPNetwork
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_sorbs(SpiderFootPlugin):
-    """SORBS:Investigate,Passive:Reputation Systems::Query the SORBS database for open relays, open proxies, vulnerable servers, etc."""
 
+    meta = {
+        'name': "SORBS",
+        'summary': "Query the SORBS database for open relays, open proxies, vulnerable servers, etc.",
+        'flags': [""],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "http://www.sorbs.net/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "http://www.sorbs.net/information/proxy.shtml",
+                "http://www.sorbs.net/information/spamfo/",
+                "http://www.sorbs.net/general/using.shtml"
+            ],
+            'favIcon': "https://www.google.com/s2/favicons?domain=http://www.sorbs.net/",
+            'logo': "http://www.sorbs.net/img/pix.gif",
+            'description': "The Spam and Open Relay Blocking System (SORBS) was conceived as an anti-spam project "
+                                "where a daemon would check \"on-the-fly\", all servers from which it received email "
+                                "to determine if that email was sent via various types of proxy and open-relay servers.\n"
+                                "The SORBS (Spam and Open Relay Blocking System) provides free access to its "
+                                "DNS-based Block List (DNSBL) to effectively block email from more than 12 million host servers "
+                                "known to disseminate spam, phishing attacks and other forms of malicious email.",
+        }
+    }
 
     # Default options
     opts = {
@@ -38,7 +61,7 @@ class sfp_sorbs(SpiderFootPlugin):
     }
 
     # Target
-    results = dict()
+    results = None
 
     # Whole bunch here:
     # http://en.wikipedia.org/wiki/Comparison_of_DNS_blacklists
@@ -56,9 +79,9 @@ class sfp_sorbs(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -87,7 +110,10 @@ class sfp_sorbs(SpiderFootPlugin):
             try:
                 lookup = self.reverseAddr(qaddr) + "." + domain
                 self.sf.debug("Checking Blacklist: " + lookup)
-                addrs = self.sf.normalizeDNS(socket.gethostbyname_ex(lookup))
+                addrs = self.sf.resolveHost(lookup)
+                if not addrs:
+                    continue
+
                 self.sf.debug("Addresses returned: " + str(addrs))
 
                 text = None
@@ -96,7 +122,7 @@ class sfp_sorbs(SpiderFootPlugin):
                         text = self.checks[domain] + " (" + qaddr + ")"
                         break
                     else:
-                        if str(addr) not in self.checks[domain].keys():
+                        if str(addr) not in list(self.checks[domain].keys()):
                             self.sf.debug("Return code not found in list: " + str(addr))
                             continue
 
@@ -128,9 +154,8 @@ class sfp_sorbs(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
         parentEvent = event
-        addrlist = list()
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
             return None
@@ -141,9 +166,9 @@ class sfp_sorbs(SpiderFootPlugin):
                 return None
             else:
                 if IPNetwork(eventData).prefixlen < self.opts['maxnetblock']:
-                    self.sf.debug("Network size bigger than permitted: " +
-                                  str(IPNetwork(eventData).prefixlen) + " > " +
-                                  str(self.opts['maxnetblock']))
+                    self.sf.debug("Network size bigger than permitted: "
+                                  + str(IPNetwork(eventData).prefixlen) + " > "
+                                  + str(self.opts['maxnetblock']))
                     return None
 
         if eventName == 'NETBLOCK_MEMBER':

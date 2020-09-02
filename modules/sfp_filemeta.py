@@ -11,24 +11,30 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
+import io
 import mimetypes
-import PyPDF2
-import openxmllib
+
+import docx
 import exifread
-import lxml
-from StringIO import StringIO
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+import pptx
+import PyPDF2
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_filemeta(SpiderFootPlugin):
-    """File Metadata:Footprint:Content Analysis::Extracts meta data from documents and images."""
 
-
-
+    meta = {
+        'name': "File Metadata Extractor",
+        'summary': "Extracts meta data from documents and images.",
+        'flags': [""],
+        'useCases': ["Footprint"],
+        'categories': ["Content Analysis"]
+    }
 
     # Default options
     opts = {
-        'fileexts': ["docx", "pptx", 'xlsx', 'pdf', 'jpg', 'jpeg', 'tiff', 'tif'],
+        'fileexts': ["docx", "pptx", 'pdf', 'jpg', 'jpeg', 'tiff', 'tif'],
         'timeout': 300
     }
 
@@ -38,13 +44,14 @@ class sfp_filemeta(SpiderFootPlugin):
         'timeout': "Download timeout for files, in seconds."
     }
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
+        self.__dataSource__ = "Target Website"
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -63,7 +70,7 @@ class sfp_filemeta(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
             return None
@@ -79,7 +86,8 @@ class sfp_filemeta(SpiderFootPlugin):
                 # typically large.
                 ret = self.sf.fetchUrl(eventData, timeout=self.opts['timeout'],
                                        useragent=self.opts['_useragent'], dontMangle=True,
-                                       sizeLimit=10000000)
+                                       sizeLimit=10000000,
+                                       verify=False)
                 if ret['content'] is None:
                     self.sf.error("Unable to fetch file for meta analysis: " +
                                   eventData, False)
@@ -95,7 +103,7 @@ class sfp_filemeta(SpiderFootPlugin):
                 # Based on the file extension, handle it
                 if fileExt.lower() == "pdf":
                     try:
-                        raw = StringIO(ret['content'])
+                        raw = io.BytesIO(ret['content'])
                         #data = metapdf.MetaPdfReader().read_metadata(raw)
                         pdf = PyPDF2.PdfFileReader(raw, strict=False)
                         data = pdf.getDocumentInfo()
@@ -106,21 +114,31 @@ class sfp_filemeta(SpiderFootPlugin):
                                       eventData + "(" + str(e) + ")", False)
                         return None
 
-                if fileExt.lower() in ["pptx", "docx", "xlsx"]:
+                if fileExt.lower() in ["docx"]:
                     try:
+                        c = io.BytesIO(ret['content'])
+                        doc = docx.Document(c)
                         mtype = mimetypes.guess_type(eventData)[0]
-                        doc = openxmllib.openXmlDocument(data=ret['content'], mime_type=mtype)
-                        self.sf.debug("Office type: " + doc.mimeType)
-                        data = doc.allProperties
-                        meta = str(data)
-                    except ValueError as e:
-                        self.sf.error("Unable to parse meta data from: " +
+                        self.sf.debug("Office type: " + str(mtype))
+                        a = doc.core_properties.author
+                        c = doc.core_properties.comments
+                        data = [_f for _f in [a, c] if _f]
+                        meta = ", ".join(data)
+                    except BaseException as e:
+                        self.sf.error("Unable to process file: " +
                                       eventData + "(" + str(e) + ")", False)
                         return None
-                    except lxml.etree.XMLSyntaxError as e:
-                        self.sf.error("Unable to parse XML within: " +
-                                      eventData + "(" + str(e) + ")", False)
-                        return None
+
+                if fileExt.lower() in ["pptx"]:
+                    try:
+                        c = io.BytesIO(ret['content'])
+                        doc = pptx.Presentation(c)
+                        mtype = mimetypes.guess_type(eventData)[0]
+                        self.sf.debug("Office type: " + str(mtype))
+                        a = doc.core_properties.author
+                        c = doc.core_properties.comments
+                        data = [_f for _f in [a, c] if _f]
+                        meta = ", ".join(data)
                     except BaseException as e:
                         self.sf.error("Unable to process file: " +
                                       eventData + "(" + str(e) + ")", False)
@@ -128,7 +146,7 @@ class sfp_filemeta(SpiderFootPlugin):
 
                 if fileExt.lower() in ["jpg", "jpeg", "tiff"]:
                     try:
-                        raw = StringIO(ret['content'])
+                        raw = io.BytesIO(ret['content'])
                         data = exifread.process_file(raw)
                         if data is None or len(data) == 0:
                             continue

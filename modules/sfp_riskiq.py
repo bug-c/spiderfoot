@@ -10,14 +10,43 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import json
 import base64
-import socket
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+import json
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_riskiq(SpiderFootPlugin):
-    """RiskIQ:Investigate,Passive:Reputation Systems:apikey:Obtain information from RiskIQ's (formerly PassiveTotal) Passive DNS and Passive SSL databases."""
 
+    meta = {
+        'name': "RiskIQ",
+        'summary': "Obtain information from RiskIQ's (formerly PassiveTotal) Passive DNS and Passive SSL databases.",
+        'flags': ["apikey"],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://community.riskiq.com/",
+            'model': "FREE_AUTH_LIMITED",
+            'references': [
+                "https://info.riskiq.net/help",
+                "https://www.riskiq.com/resources/?type=training_videos",
+                "https://api.riskiq.net/api/concepts.html"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://community.riskiq.com/home",
+                "Register a free account",
+                "Navigate to https://community.riskiq.com/settings",
+                "Click on 'Show' beside 'User'",
+                "The API Key combination will be under 'Key' and 'Secret'"
+            ],
+            'favIcon': "https://community.riskiq.com/static/assets/favicon.png",
+            'logo': "https://community.riskiq.com/static/assets/favicon.png",
+            'description': "RiskIQ Community brings petabytes of internet intelligence directly to your fingertips. "
+                                "Investigate threats by pivoting through attacker infrastructure data. "
+                                "Understand your digital assets that are internet-exposed, "
+                                "and map and monitor your external attack surface.",
+        }
+    }
 
     # Default options
     opts = {
@@ -52,26 +81,8 @@ class sfp_riskiq(SpiderFootPlugin):
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
-
-    # Verify a host resolves to an IP
-    def validateIP(self, host, ip):
-        try:
-            addrs = socket.gethostbyname_ex(host)
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + host + ": " + str(e))
-            return False
-
-        for addr in addrs:
-            if type(addr) == list:
-                for a in addr:
-                    if str(a) == ip:
-                        return True
-            else:
-                if str(addr) == ip:
-                    return True
-        return False
 
     # What events is this module interested in for input
     def watchedEvents(self):
@@ -79,7 +90,8 @@ class sfp_riskiq(SpiderFootPlugin):
 
     # What events this module produces
     def producedEvents(self):
-        return ["IP_ADDRESS", "INTERNET_NAME", "AFFILIATE_DOMAIN", 
+        return ["IP_ADDRESS", "INTERNET_NAME", "AFFILIATE_INTERNET_NAME",
+                "DOMAIN_NAME", "AFFILIATE_DOMAIN_NAME",
                 "CO_HOSTED_SITE", "NETBLOCK_OWNER"]
 
     def query(self, qry, qtype, opts=dict()):
@@ -99,18 +111,24 @@ class sfp_riskiq(SpiderFootPlugin):
             url = "https://api.passivetotal.org/v2/whois/search"
             post = '{"field": "email", "query": "' + qry + '"}'
 
-        cred = base64.b64encode(self.opts['api_key_login'] + ":" + self.opts['api_key_password'])
+        api_key_login = self.opts['api_key_login']
+        if type(api_key_login) == str:
+            api_key_login = api_key_login.encode('utf-8')
+        api_key_password = self.opts['api_key_password']
+        if type(api_key_password) == str:
+            api_key_password = api_key_password.encode('utf-8')
+        cred = base64.b64encode(api_key_login + ":".encode('utf-8') + api_key_password)
         headers = {
-            'Authorization': "Basic " + cred,
+            'Authorization': "Basic " + cred.decode('utf-8'),
             'Content-Type': 'application/json'
         }
 
         # Be more forgiving with the timeout as some queries for subnets can be slow
-        res = self.sf.fetchUrl(url , timeout=30, 
+        res = self.sf.fetchUrl(url, timeout=30,
                                useragent="SpiderFoot", headers=headers,
                                postData=post)
 
-        if res['code'] in [ "400", "429", "500", "403" ]:
+        if res['code'] in ["400", "429", "500", "403"]:
             self.sf.error("RiskIQ access seems to have been rejected or you have exceeded usage limits.", False)
             self.errorState = True
             return None
@@ -125,7 +143,7 @@ class sfp_riskiq(SpiderFootPlugin):
                 self.sf.info("No RiskIQ info found for " + qry)
                 return None
         except BaseException as e:
-            self.sf.error("Invalid JSON returned by RiskIQ.", False)
+            self.sf.error(f"Invalid JSON returned by RiskIQ: {e}", False)
             return None
 
         return ret['results']
@@ -140,7 +158,7 @@ class sfp_riskiq(SpiderFootPlugin):
         if self.errorState:
             return None
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Ignore messages from myself
         if srcModuleName == "sfp_riskiq":
@@ -154,12 +172,12 @@ class sfp_riskiq(SpiderFootPlugin):
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
         else:
             self.results[eventData] = True
 
-        if eventName in [ 'DOMAIN_NAME' ]:
+        if eventName in ['DOMAIN_NAME']:
             ret = self.query(eventData, "PSSL")
             if not ret:
                 self.sf.info("No RiskIQ passive SSL data found for " + eventData)
@@ -169,14 +187,20 @@ class sfp_riskiq(SpiderFootPlugin):
                     # Generate an event for the IP first, and then link the cert
                     # to that event.
                     for res in ret:
-                        if res['subjectCommonName'].endswith("." + eventData):
-                            e = SpiderFootEvent("INTERNET_NAME", res['subjectCommonName'], 
+                        if res['subjectCommonName'] == eventData:
+                            continue
+                        if self.getTarget().matches(res['subjectCommonName'], includeChildren=True):
+                            e = SpiderFootEvent("INTERNET_NAME", res['subjectCommonName'],
                                                 self.__name__, event)
                             self.notifyListeners(e)
+                            if self.sf.isDomain(res['subjectCommonName'], self.opts['_internettlds']):
+                                e = SpiderFootEvent("DOMAIN_NAME", res['subjectCommonName'],
+                                                    self.__name__, event)
+                                self.notifyListeners(e)
                 except BaseException as e:
                     self.sf.error("Invalid response returned from RiskIQ: " + str(e), False)
 
-        if eventName in [ 'EMAILADDR']:
+        if eventName == 'EMAILADDR':
             ret = self.query(eventData, "WHOIS")
             if not ret:
                 self.sf.info("No RiskIQ passive DNS data found for " + eventData)
@@ -187,12 +211,17 @@ class sfp_riskiq(SpiderFootPlugin):
                     if self.sf.validIP(r['domain']):
                         t = "NETBLOCK_OWNER"
                     else:
-                        t = "AFFILIATE_DOMAIN"
+                        t = "AFFILIATE_INTERNET_NAME"
                     e = SpiderFootEvent(t, r['domain'], self.__name__, event)
                     self.notifyListeners(e)
+
+                    if t == "AFFILIATE_INTERNET_NAME" and self.sf.isDomain(r['domain'], self.opts['_internettlds']):
+                        evt = SpiderFootEvent("AFFILIATE_DOMAIN_NAME", r['domain'], self.__name__, event)
+                        self.notifyListeners(evt)
+
             return None
 
-        if eventName in [ 'IP_ADDRESS', 'INTERNET_NAME', 'DOMAIN_NAME' ]:
+        if eventName in ['IP_ADDRESS', 'INTERNET_NAME', 'DOMAIN_NAME']:
             ret = self.query(eventData, "PDNS")
             if not ret:
                 self.sf.info("No RiskIQ passive DNS data found for " + eventData)
@@ -201,19 +230,28 @@ class sfp_riskiq(SpiderFootPlugin):
             cohosts = list()
             if eventName == "IP_ADDRESS":
                 for r in ret:
+                    if r['focusPoint'].endswith("."):
+                        r['focusPoint'] = r['focusPoint'][:-1]
+
                     # Record could be pointing to our IP, or from our IP
                     if not self.getTarget().matches(r['focusPoint']) and "*" not in r['focusPoint']:
                         # We found a co-host
                         cohosts.append(r['focusPoint'])
 
-            if eventName in [ "INTERNET_NAME", "DOMAIN_NAME" ]:
+            if eventName in ["INTERNET_NAME", "DOMAIN_NAME"]:
                 # Record could be an A/CNAME of this entity, or something pointing to it
                 for r in ret:
+                    if r['focusPoint'].endswith("."):
+                        r['focusPoint'] = r['focusPoint'][:-1]
+
                     if r['focusPoint'] != eventData and "*" not in r['focusPoint']:
                         cohosts.append(r['focusPoint'])
 
             for co in cohosts:
-                if eventName == "IP_ADDRESS" and (self.opts['verify'] and not self.validateIP(co, eventData)):
+                if co == eventData:
+                    continue
+
+                if eventName == "IP_ADDRESS" and (self.opts['verify'] and not self.sf.validateIP(co, eventData)):
                     self.sf.debug("Host no longer resolves to our IP.")
                     continue
 
@@ -221,6 +259,9 @@ class sfp_riskiq(SpiderFootPlugin):
                     if self.getTarget().matches(co, includeParents=True):
                         e = SpiderFootEvent("INTERNET_NAME", co, self.__name__, event)
                         self.notifyListeners(e)
+                        if self.sf.isDomain(co, self.opts['_internettlds']):
+                            e = SpiderFootEvent("DOMAIN_NAME", co, self.__name__, event)
+                            self.notifyListeners(e)
                         continue
 
                 if self.cohostcount < self.opts['maxcohost']:

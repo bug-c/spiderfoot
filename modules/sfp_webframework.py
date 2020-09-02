@@ -11,24 +11,30 @@
 # -------------------------------------------------------------------------------
 
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 regexps = dict({
     "jQuery": list(['jquery']),  # unlikely false positive
-    "YUI": list(['\/yui\/', 'yui\-', 'yui\.']),
-    "Prototype": list(['\/prototype\/', 'prototype\-', 'prototype\.js']),
-    "ZURB Foundation": list(['\/foundation\/', 'foundation\-', 'foundation\.js']),
-    "Bootstrap": list(['\/bootstrap\/', 'bootstrap\-', 'bootstrap\.js']),
-    "ExtJS": list(['[\'\"\=]ext\.js', 'extjs', '\/ext\/*\.js']),
-    "Mootools": list(['\/mootools\/', 'mootools\-', 'mootools\.js']),
-    "Dojo": list(['\/dojo\/', '[\'\"\=]dojo\-', '[\'\"\=]dojo\.js']),
-    "Wordpress": list(['\/wp-includes\/', '\/wp-content\/'])
+    "YUI": list([r'\/yui\/', r'yui\-', r'yui\.']),
+    "Prototype": list([r'\/prototype\/', r'prototype\-', r'prototype\.js']),
+    "ZURB Foundation": list([r'\/foundation\/', r'foundation\-', r'foundation\.js']),
+    "Bootstrap": list([r'\/bootstrap\/', r'bootstrap\-', r'bootstrap\.js']),
+    "ExtJS": list([r'[\'\"\=]ext\.js', 'extjs', r'\/ext\/*\.js']),
+    "Mootools": list([r'\/mootools\/', r'mootools\-', r'mootools\.js']),
+    "Dojo": list([r'\/dojo\/', r'[\'\"\=]dojo\-', r'[\'\"\=]dojo\.js']),
+    "Wordpress": list([r'\/wp-includes\/', r'\/wp-content\/'])
 })
 
-
 class sfp_webframework(SpiderFootPlugin):
-    """Web Framework:Footprint:Content Analysis::Identify the usage of popular web frameworks like jQuery, YUI and others."""
 
+    meta = {
+        'name': "Web Framework Identifier",
+        'summary': "Identify the usage of popular web frameworks like jQuery, YUI and others.",
+        'flags': [""],
+        'useCases': ["Footprint", "Passive"],
+        'categories': ["Content Analysis"]
+    }
 
     # Default options
     opts = {}
@@ -41,14 +47,14 @@ class sfp_webframework(SpiderFootPlugin):
     }
 
     # Target
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.__dataSource__ = "Target Website"
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -67,18 +73,15 @@ class sfp_webframework(SpiderFootPlugin):
         eventName = event.eventType
         srcModuleName = event.module
         eventData = event.data
+        eventSource = event.actualSource
 
         # We only want web content
         if srcModuleName != "sfp_spider":
             return None
 
-        # If you are processing TARGET_WEB_CONTENT, this is how you would get the
-        # source of that raw data (e.g. a URL.)
-        eventSource = event.sourceEvent.data
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
-
-        if eventSource not in self.results.keys():
+        if eventSource not in self.results:
             self.results[eventSource] = list()
 
         # We only want web content for pages on the target site
@@ -86,7 +89,7 @@ class sfp_webframework(SpiderFootPlugin):
             self.sf.debug("Not collecting web content information for external sites.")
             return None
 
-        for regexpGrp in regexps.keys():
+        for regexpGrp in list(regexps.keys()):
             if regexpGrp in self.results[eventSource]:
                 continue
 
@@ -95,16 +98,11 @@ class sfp_webframework(SpiderFootPlugin):
                 matches = re.findall(pat, eventData)
                 if len(matches) > 0 and regexpGrp not in self.results[eventSource]:
                     self.sf.info("Matched " + regexpGrp + " in content from " + eventSource)
-                    self.results[eventSource].append(regexpGrp)
+                    self.results[eventSource] = self.results[eventSource] + [regexpGrp]
                     evt = SpiderFootEvent("URL_WEB_FRAMEWORK", regexpGrp,
-                                          self.__name__, event.sourceEvent)
+                                          self.__name__, event)
                     self.notifyListeners(evt)
 
         return None
-
-    # If you intend for this module to act on its own (e.g. not solely rely
-    # on events from other modules, then you need to have a start() method
-    # and within that method call self.checkForStop() to see if you've been
-    # politely asked by the controller to stop your activities (user abort.)
 
 # End of sfp_webframework class

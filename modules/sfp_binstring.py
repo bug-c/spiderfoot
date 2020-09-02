@@ -11,11 +11,19 @@
 # -------------------------------------------------------------------------------
 
 import string
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_binstring(SpiderFootPlugin):
-    """Binary String Extractor:Footprint:Content Analysis:errorprone:Attempt to identify strings in binary content."""
 
+    meta = {
+        'name': "Binary String Extractor",
+        'summary': "Attempt to identify strings in binary content.",
+        'flags': ["errorprone"],
+        'useCases': ["Footprint"],
+        'categories': ["Content Analysis"]
+    }
 
     # Default options
     opts = {
@@ -24,8 +32,8 @@ class sfp_binstring(SpiderFootPlugin):
         'maxfilesize': 1000000,
         'usedict': True,
         'fileexts': ['png', 'gif', 'jpg', 'jpeg', 'tiff', 'tif',
-                    'ico', 'flv', 'mp4', 'mp3', 'avi', 'mpg',
-                    'mpeg', 'dat', 'mov', 'swf', 'exe', 'bin'],
+                     'ico', 'flv', 'mp4', 'mp3', 'avi', 'mpg',
+                     'mpeg', 'dat', 'mov', 'swf', 'exe', 'bin'],
         'filterchars': '#}{|%^&*()=+,;[]~'
     }
 
@@ -51,7 +59,7 @@ class sfp_binstring(SpiderFootPlugin):
 
         self.d = set(self.sf.dictwords())
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     def getStrings(self, content):
@@ -62,6 +70,7 @@ class sfp_binstring(SpiderFootPlugin):
             return None
 
         for c in content:
+            c = str(c)
             if len(words) >= self.opts['maxwords']:
                 break
             if c in string.printable and c not in string.whitespace:
@@ -87,7 +96,7 @@ class sfp_binstring(SpiderFootPlugin):
 
                 if accept:
                     words.append(result)
-                    
+
                 result = ""
 
         if len(words) == 0:
@@ -112,7 +121,7 @@ class sfp_binstring(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
             return None
@@ -124,11 +133,12 @@ class sfp_binstring(SpiderFootPlugin):
         res = None
         for fileExt in self.opts['fileexts']:
             if eventData.lower().endswith("." + fileExt.lower()) or "." + fileExt + "?" in eventData.lower():
-                res = self.sf.fetchUrl(eventData, 
-                                       useragent=self.opts['_useragent'], 
+                res = self.sf.fetchUrl(eventData,
+                                       useragent=self.opts['_useragent'],
                                        dontMangle=True,
-                                       sizeLimit=self.opts['maxfilesize'])
-                
+                                       sizeLimit=self.opts['maxfilesize'],
+                                       verify=False)
+
         if res:
             self.sf.debug("Searching for strings")
             words = self.getStrings(res['content'])

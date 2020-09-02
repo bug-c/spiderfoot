@@ -11,11 +11,32 @@
 # -------------------------------------------------------------------------------
 
 import datetime
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_wikileaks(SpiderFootPlugin):
-    """Wikileaks:Footprint,Investigate,Passive:Leaks, Dumps and Breaches::Search Wikileaks for mentions of domain names and e-mail addresses."""
+
+    meta = {
+        'name': "Wikileaks",
+        'summary': "Search Wikileaks for mentions of domain names and e-mail addresses.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Leaks, Dumps and Breaches"],
+        'dataSource': {
+            'website': "https://wikileaks.org/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://wikileaks.org/-Leaks-.html#submit",
+                "https://wikileaks.org/What-is-WikiLeaks.html"
+            ],
+            'favIcon': "https://wikileaks.org/IMG/favicon.ico",
+            'logo': "https://wikileaks.org/IMG/favicon.ico",
+            'description': "WikiLeaks specializes in the analysis and publication of large datasets of censored "
+                                "or otherwise restricted official materials involving war, spying and corruption. "
+                                "It has so far published more than 10 million documents and associated analyses.",
+        }
+    }
 
     # Default options
     opts = {
@@ -29,13 +50,13 @@ class sfp_wikileaks(SpiderFootPlugin):
         'external': "Include external leak sources such as Associated Twitter accounts, Snowden + Hammond Documents, Cryptome Documents, ICWatch, This Day in WikiLeaks Blog and WikiLeaks Press, WL Central."
     }
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -55,31 +76,32 @@ class sfp_wikileaks(SpiderFootPlugin):
         eventData = event.data
         self.currentEventSrc = event
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
-        else:
-            self.results[eventData] = True
+
+        self.results[eventData] = True
 
         if self.opts['external']:
             external = "True"
         else:
             external = ""
 
-        if self.opts['daysback'] != None and self.opts['daysback'] != 0:
+        if self.opts['daysback'] is not None and self.opts['daysback'] != 0:
             newDate = datetime.datetime.now() - datetime.timedelta(days=int(self.opts['daysback']))
             maxDate = newDate.strftime("%Y-%m-%d")
         else:
             maxDate = ""
 
         qdata = eventData.replace(" ", "+")
-        wlurl = "https://search.wikileaks.org/?query=%22" + qdata + "%22" + \
-              "&released_date_start=" + maxDate + "&include_external_sources=" + \
-              external + "&new_search=True&order_by=most_relevant#results"
-        res = self.sf.fetchUrl(wlurl)
+        wlurl = "query=%22" + qdata + "%22" + "&released_date_start=" + maxDate + "&include_external_sources=" + external + "&new_search=True&order_by=most_relevant#results"
+
+        res = self.sf.fetchUrl(
+            "https://search.wikileaks.org/?" + wlurl
+        )
         if res['content'] is None:
             self.sf.error("Unable to fetch Wikileaks content.", False)
             return None
@@ -115,7 +137,7 @@ class sfp_wikileaks(SpiderFootPlugin):
                     self.sf.debug("Found a link: " + link)
                     if self.checkForStop():
                         return None
-    
+
                     # Wikileaks leak links will have a nested folder structure link
                     if link.count('/') >= 4:
                         if not link.endswith(".js") and not link.endswith(".css"):
@@ -124,7 +146,7 @@ class sfp_wikileaks(SpiderFootPlugin):
                             valid = True
 
             if valid:
-                evt = SpiderFootEvent("SEARCH_ENGINE_WEB_CONTENT", res['content'], 
+                evt = SpiderFootEvent("SEARCH_ENGINE_WEB_CONTENT", res['content'],
                                       self.__name__, event)
                 self.notifyListeners(evt)
 

@@ -12,11 +12,19 @@
 # -----------------------------------------------------------------------------
 
 import dns.resolver
-from sflib import SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_dnscommonsrv(SpiderFootPlugin):
-    """DNS Common SRV:Footprint,Investigate,Passive:DNS::Attempts to identify hostnames through common SRV."""
+
+    meta = {
+        'name': "DNS Common SRV",
+        'summary': "Attempts to identify hostnames through common SRV.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["DNS"]
+    }
 
     # Default options
     opts = {}
@@ -24,51 +32,56 @@ class sfp_dnscommonsrv(SpiderFootPlugin):
     # Option descriptions
     optdescs = {}
 
-    events = dict()
+    events = None
 
-    commonsrv = [ # LDAP/Kerberos, used for Active Directory
-                  # https://technet.microsoft.com/en-us/library/cc961719.aspx
-                 '_ldap._tcp',
-                 '_gc._msdcs',
-                 '_ldap._tcp.pdc._msdcs',
-                 '_ldap._tcp.gc._msdcs',
-                 '_kerberos._tcp.dc._msdcs',
-                 '_kerberos._tcp',
-                 '_kerberos._udp',
-                 '_kerberos-master._tcp',
-                 '_kerberos-master._udp',
-                 '_kpasswd._tcp',
-                 '_kpasswd._udp',
-                 '_ntp._udp',
+    commonsrv = [
+        # LDAP/Kerberos, used for Active Directory
+        # https://technet.microsoft.com/en-us/library/cc961719.aspx
+        '_ldap._tcp',
+        '_gc._msdcs',
+        '_ldap._tcp.pdc._msdcs',
+        '_ldap._tcp.gc._msdcs',
+        '_kerberos._tcp.dc._msdcs',
+        '_kerberos._tcp',
+        '_kerberos._udp',
+        '_kerberos-master._tcp',
+        '_kerberos-master._udp',
+        '_kpasswd._tcp',
+        '_kpasswd._udp',
+        '_ntp._udp',
 
-                 # SIP
-                 '_sip._tcp',
-                 '_sip._udp',
-                 '_sip._tls',
-                 '_sips._tcp',
+        # SIP
+        '_sip._tcp',
+        '_sip._udp',
+        '_sip._tls',
+        '_sips._tcp',
 
-                 # STUN
-                 # https://tools.ietf.org/html/rfc5389
-                 '_stun._tcp',
-                 '_stun._udp',
-                 '_stuns._tcp',
+        # STUN
+        # https://tools.ietf.org/html/rfc5389
+        '_stun._tcp',
+        '_stun._udp',
+        '_stuns._tcp',
 
-                 # TURN
-                 # https://tools.ietf.org/html/rfc5928
-                 '_turn._tcp',
-                 '_turn._udp',
-                 '_turns._tcp',
+        # TURN
+        # https://tools.ietf.org/html/rfc5928
+        '_turn._tcp',
+        '_turn._udp',
+        '_turns._tcp',
 
-                 # XMPP
-                 # http://xmpp.org/rfcs/rfc6120.html
-                 '_jabber._tcp',
-                 '_xmpp-client._tcp',
-                 '_xmpp-server._tcp']
+        # XMPP
+        # http://xmpp.org/rfcs/rfc6120.html
+        '_jabber._tcp',
+        '_xmpp-client._tcp',
+        '_xmpp-server._tcp'
+    ]
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.events = dict()
+        self.events = self.tempStorage()
         self.__dataSource__ = "DNS"
+
+        for opt in list(userOpts.keys()):
+            self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
@@ -101,6 +114,10 @@ class sfp_dnscommonsrv(SpiderFootPlugin):
 
         self.events[eventDataHash] = True
 
+        res = dns.resolver.Resolver()
+        if self.opts.get('_dnsserver', "") != "":
+            res.nameservers = [self.opts['_dnsserver']]
+
         self.sf.debug("Iterating through possible SRV records.")
         # Try resolving common names
         for srv in self.commonsrv:
@@ -114,8 +131,8 @@ class sfp_dnscommonsrv(SpiderFootPlugin):
                 continue
 
             try:
-                answers = dns.resolver.query(name, 'SRV')
-            except BaseException as e:
+                answers = res.query(name, 'SRV')
+            except BaseException:
                 answers = []
 
             for a in answers:

@@ -11,14 +11,40 @@
 # -------------------------------------------------------------------------------
 
 import json
-import socket
-import urllib
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_urlscan(SpiderFootPlugin):
-    """URLScan.io:Footprint,Investigate,Passive:Search Engines::Search URLScan.io cache for domain information."""
 
-    opts = { 
+    meta = {
+        'name': "URLScan.io",
+        'summary': "Search URLScan.io cache for domain information.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Search Engines"],
+        'dataSource': {
+            'website': "https://urlscan.io/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://urlscan.io/about-api/"
+            ],
+            'favIcon': "https://urlscan.io/img/urlscan_256.png",
+            'logo': "https://urlscan.io/img/urlscan_256.png",
+            'description': "urlscan.io is a service to scan and analyse websites. "
+                                "When a URL is submitted to urlscan.io, an automated process will browse to the URL "
+                                "like a regular user and record the activity that this page navigation creates. "
+                                "This includes the domains and IPs contacted, the resources (JavaScript, CSS, etc) requested from "
+                                "those domains, as well as additional information about the page itself. "
+                                "urlscan.io will take a screenshot of the page, record the DOM content, JavaScript global variables, "
+                                "cookies created by the page, and a myriad of other observations.",
+        }
+    }
+
+    opts = {
         'verify': True
     }
     optdescs = {
@@ -33,7 +59,7 @@ class sfp_urlscan(SpiderFootPlugin):
         self.results = self.tempStorage()
         self.errorState = False
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -43,33 +69,16 @@ class sfp_urlscan(SpiderFootPlugin):
     # What events this module produces
     def producedEvents(self):
         return ['GEOINFO', 'LINKED_URL_INTERNAL', 'RAW_RIR_DATA',
-                'INTERNET_NAME', 'INTERNET_NAME_UNRESOLVED', 'BGP_AS_MEMBER', 'WEBSERVER_BANNER']
-
-    # Resolve a host
-    def resolveHost(self, host):
-        try:
-            # IDNA-encode the hostname in case it contains unicode
-            if type(host) != unicode:
-                host = unicode(host, "utf-8", errors='replace').encode("idna")
-            else:
-                host = host.encode("idna")
-
-            addrs = socket.gethostbyname_ex(host)
-            if not addrs:
-                return False
-
-            return True
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + host + ": " + str(e))
-            return False
+                'DOMAIN_NAME', 'INTERNET_NAME', 'INTERNET_NAME_UNRESOLVED',
+                'BGP_AS_MEMBER', 'WEBSERVER_BANNER']
 
     # https://urlscan.io/about-api/
     def query(self, qry):
         params = {
-            'q': 'domain:' + qry.encode('raw_unicode_escape')
+            'q': 'domain:' + qry.encode('raw_unicode_escape').decode("ascii", errors='replace')
         }
 
-        res = self.sf.fetchUrl('https://urlscan.io/api/v1/search/?' + urllib.urlencode(params),
+        res = self.sf.fetchUrl('https://urlscan.io/api/v1/search/?' + urllib.parse.urlencode(params),
                                timeout=self.opts['_fetchtimeout'],
                                useragent=self.opts['_useragent'])
 
@@ -85,7 +94,7 @@ class sfp_urlscan(SpiderFootPlugin):
         try:
             result = json.loads(res['content'])
         except Exception as e:
-            self.sf.debug("Error processing JSON response.")
+            self.sf.debug(f"Error processing JSON response: {e}")
             return None
 
         return result
@@ -99,11 +108,11 @@ class sfp_urlscan(SpiderFootPlugin):
         if self.errorState:
             return None
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
 
         self.results[eventData] = True
@@ -149,7 +158,7 @@ class sfp_urlscan(SpiderFootPlugin):
             if asn:
                 asns.append(asn.replace('AS', ''))
 
-            location = ', '.join(filter(None, [page.get('city'), page.get('country')]))
+            location = ', '.join([_f for _f in [page.get('city'), page.get('country')] if _f])
 
             if location:
                 locations.append(location)
@@ -177,12 +186,19 @@ class sfp_urlscan(SpiderFootPlugin):
             evt = SpiderFootEvent('GEOINFO', location, self.__name__, event)
             self.notifyListeners(evt)
 
+        if self.opts['verify'] and len(domains) > 0:
+            self.sf.info("Resolving " + str(len(set(domains))) + " domains ...")
+
         for domain in set(domains):
-            if self.opts['verify'] and not self.resolveHost(domain):
+            if self.opts['verify'] and not self.sf.resolveHost(domain):
                 evt = SpiderFootEvent('INTERNET_NAME_UNRESOLVED', domain, self.__name__, event)
                 self.notifyListeners(evt)
             else:
                 evt = SpiderFootEvent('INTERNET_NAME', domain, self.__name__, event)
+                self.notifyListeners(evt)
+
+            if self.sf.isDomain(domain, self.opts['_internettlds']):
+                evt = SpiderFootEvent('DOMAIN_NAME', domain, self.__name__, event)
                 self.notifyListeners(evt)
 
         for asn in set(asns):

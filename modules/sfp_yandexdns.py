@@ -11,13 +11,32 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import socket
 import dns.resolver
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_yandexdns(SpiderFootPlugin):
-    """Yandex DNS:Investigate,Passive:Reputation Systems::Check if a host would be blocked by Yandex DNS"""
+
+    meta = {
+        'name': "Yandex DNS",
+        'summary': "Check if a host would be blocked by Yandex DNS",
+        'flags': [""],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://yandex.com/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://tech.yandex.com/"
+            ],
+            'favIcon': "https://yastatic.net/iconostasis/_/tToKamh-mh5XlViKpgiJRQgjz1Q.png",
+            'logo': "https://yastatic.net/iconostasis/_/tToKamh-mh5XlViKpgiJRQgjz1Q.png",
+            'description': "Yandex is a technology company that builds intelligent products and services powered by machine learning. "
+                                "Our goal is to help consumers and businesses better navigate the online and offline world. "
+                                "Since 1997, we have delivered world-class, locally relevant search and information services.",
+        }
+    }
 
     # Default options
     opts = {
@@ -27,13 +46,13 @@ class sfp_yandexdns(SpiderFootPlugin):
     optdescs = {
     }
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -51,13 +70,13 @@ class sfp_yandexdns(SpiderFootPlugin):
     # https://dns.yandex.com/advanced/
     def queryAddr(self, qaddr):
         res = dns.resolver.Resolver()
-        res.nameservers = [ "77.88.8.88", "77.88.8.2" ]
+        res.nameservers = ["77.88.8.88", "77.88.8.2"]
 
         try:
             addrs = res.query(qaddr)
-            self.sf.debug("Addresses returned: " + str(addrs))
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + qaddr)
+            self.sf.debug(f"Addresses returned: {addrs}")
+        except BaseException:
+            self.sf.debug(f"Unable to resolve {qaddr}")
             return False
 
         if addrs:
@@ -72,7 +91,7 @@ class sfp_yandexdns(SpiderFootPlugin):
         parentEvent = event
         resolved = False
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
             return None
@@ -82,10 +101,10 @@ class sfp_yandexdns(SpiderFootPlugin):
         # Check that it resolves first, as it becomes a valid
         # malicious host only if NOT resolved by Yandex.
         try:
-            if self.sf.normalizeDNS(socket.gethostbyname_ex(eventData)):
+            if self.sf.resolveHost(eventData):
                 resolved = True
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + eventData)
+        except BaseException:
+            self.sf.debug(f"Unable to resolve {eventData}")
             return None
 
         if not resolved:

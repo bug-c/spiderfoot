@@ -12,10 +12,30 @@
 
 import json
 import time
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_bgpview(SpiderFootPlugin):
-    """BGPView:Investigate,Footprint,Passive:Search Engines::Obtain network information from BGPView API."""
+
+    meta = {
+        'name': "BGPView",
+        'summary': "Obtain network information from BGPView API.",
+        'flags': [""],
+        'useCases': ["Investigate", "Footprint", "Passive"],
+        'categories': ["Search Engines"],
+        'dataSource': {
+            'website': "https://bgpview.io/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://bgpview.docs.apiary.io/#",
+                "https://bgpview.docs.apiary.io/api-description-document"
+            ],
+            'favIcon': "https://bgpview.io/favicon-32x32.png",
+            'logo': "https://bgpview.io/assets/logo.png",
+            'description': "BGPView is a simple API allowing consumers to view all sort of analytics data about the current state and structure of the internet.",
+        }
+    }
 
     opts = {
     }
@@ -30,14 +50,14 @@ class sfp_bgpview(SpiderFootPlugin):
         self.sf = sfc
         self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     def watchedEvents(self):
         return ['IP_ADDRESS', 'IPV6_ADDRESS', 'BGP_AS_MEMBER', 'NETBLOCK_MEMBER']
 
     def producedEvents(self):
-        return ['BGP_AS_MEMBER', 'BGP_AS_PEER', 'NETBLOCK_MEMBER',
+        return ['BGP_AS_MEMBER', 'NETBLOCK_MEMBER',
                 'PHYSICAL_ADDRESS', 'RAW_RIR_DATA']
 
     def queryAsn(self, qry):
@@ -53,7 +73,7 @@ class sfp_bgpview(SpiderFootPlugin):
         try:
             json_data = json.loads(res['content'])
         except BaseException as e:
-            self.sf.debug("Error processing JSON response from BGPView: " + str(e))
+            self.sf.debug(f"Error processing JSON response from BGPView: {e}")
             return None
 
         if not json_data.get('status') == 'ok':
@@ -68,34 +88,6 @@ class sfp_bgpview(SpiderFootPlugin):
 
         return data
 
-    def queryAsnPeers(self, qry):
-        res = self.sf.fetchUrl("https://api.bgpview.io/asn/" + qry.replace('AS', '') + '/peers',
-                               useragent=self.opts['_useragent'],
-                               timeout=self.opts['_fetchtimeout'])
-
-        time.sleep(1)
-
-        if res['content'] is None:
-            return None
-
-        try:
-            json_data = json.loads(res['content'])
-        except BaseException as e:
-            self.sf.debug("Error processing JSON response from BGPView: " + str(e))
-            return None
-
-        if not json_data.get('status') == 'ok':
-            self.sf.debug("No peers found for ASN " + qry)
-            return None
-
-        data = json_data.get('data')
-
-        if not data:
-            self.sf.debug("No peers found for ASN " + qry)
-            return None
-
-        return data
- 
     def queryIp(self, qry):
         res = self.sf.fetchUrl("https://api.bgpview.io/ip/" + qry,
                                useragent=self.opts['_useragent'],
@@ -109,7 +101,7 @@ class sfp_bgpview(SpiderFootPlugin):
         try:
             json_data = json.loads(res['content'])
         except BaseException as e:
-            self.sf.debug("Error processing JSON response from BGPView: " + str(e))
+            self.sf.debug(f"Error processing JSON response from BGPView: {e}")
             return None
 
         if not json_data.get('status') == 'ok':
@@ -137,7 +129,7 @@ class sfp_bgpview(SpiderFootPlugin):
         try:
             json_data = json.loads(res['content'])
         except BaseException as e:
-            self.sf.debug("Error processing JSON response from BGPView: " + str(e))
+            self.sf.debug(f"Error processing JSON response from BGPView: {e}")
             return None
 
         if not json_data.get('status') == 'ok':
@@ -160,10 +152,10 @@ class sfp_bgpview(SpiderFootPlugin):
         if self.errorState:
             return None
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
 
         self.results[eventData] = True
@@ -183,36 +175,8 @@ class sfp_bgpview(SpiderFootPlugin):
             if not address:
                 return None
 
-            evt = SpiderFootEvent('PHYSICAL_ADDRESS', ', '.join(filter(None, address)), self.__name__, event)
+            evt = SpiderFootEvent('PHYSICAL_ADDRESS', ', '.join([_f for _f in address if _f]), self.__name__, event)
             self.notifyListeners(evt)
-
-            data = self.queryAsnPeers(eventData)
-
-            if not data:
-                self.sf.info("No peers found for ASN " + eventData)
-                return None
-
-            peers = list()
-
-            ipv4_peers = data.get('ipv4_peers')
-            if ipv4_peers is not None:
-                for peer in ipv4_peers:
-                    asn = peer.get('asn')
-                    if not asn:
-                        continue
-                    peers.append(str(asn))
-
-            ipv6_peers = data.get('ipv6_peers')
-            if ipv6_peers is not None:
-                for peer in ipv6_peers:
-                    asn = peer.get('asn')
-                    if not asn:
-                        continue
-                    peers.append(str(asn))
-
-            for peer in set(peers):
-                evt = SpiderFootEvent('BGP_AS_PEER', str(peer), self.__name__, event)
-                self.notifyListeners(evt)
 
         if eventName == 'NETBLOCK_MEMBER':
             data = self.queryNetblock(eventData)
@@ -229,7 +193,7 @@ class sfp_bgpview(SpiderFootPlugin):
             if not address:
                 return None
 
-            evt = SpiderFootEvent('PHYSICAL_ADDRESS', ', '.join(filter(None, address)), self.__name__, event)
+            evt = SpiderFootEvent('PHYSICAL_ADDRESS', ', '.join([_f for _f in address if _f]), self.__name__, event)
             self.notifyListeners(evt)
 
         if eventName in ['IP_ADDRESS', 'IPV6_ADDRESS']:
@@ -252,6 +216,10 @@ class sfp_bgpview(SpiderFootPlugin):
                 p = prefix.get('prefix')
                 if not p:
                     continue
+
+                # Not supporting IPv6 prefixes
+                if ":" in p:
+                    continue
                 if not prefix.get('asn'):
                     continue
                 asn = prefix.get('asn').get('asn')
@@ -261,7 +229,9 @@ class sfp_bgpview(SpiderFootPlugin):
                 self.sf.info("Netblock found: " + p + " (" + str(asn) + ")")
                 evt = SpiderFootEvent("BGP_AS_MEMBER", str(asn), self.__name__, event)
                 self.notifyListeners(evt)
-                evt = SpiderFootEvent("NETBLOCK_MEMBER", p, self.__name__, event)
-                self.notifyListeners(evt)
+
+                if self.sf.validIpNetwork(p):
+                    evt = SpiderFootEvent("NETBLOCK_MEMBER", p, self.__name__, event)
+                    self.notifyListeners(evt)
 
 # End of sfp_bgpview class

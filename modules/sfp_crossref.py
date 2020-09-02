@@ -14,12 +14,19 @@
 # -------------------------------------------------------------------------------
 
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_crossref(SpiderFootPlugin):
-    """Cross-Reference:Footprint:Crawling and Scanning::Identify whether other domains are associated ('Affiliates') of the target."""
 
+    meta = {
+        'name': "Cross-Referencer",
+        'summary': "Identify whether other domains are associated ('Affiliates') of the target.",
+        'flags': [""],
+        'useCases': ["Footprint"],
+        'categories': ["Crawling and Scanning"]
+    }
 
     # Default options
     opts = {
@@ -32,21 +39,18 @@ class sfp_crossref(SpiderFootPlugin):
     }
 
     # Internal results tracking
-    results = dict()
-    fetched = list()
+    fetched = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
-        self.fetched = list()
+        self.fetched = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return ['LINKED_URL_EXTERNAL', 'SIMILARDOMAIN', 
-                'CO_HOSTED_SITE', 'DARKNET_MENTION_URL']
+        return ['LINKED_URL_EXTERNAL', 'SIMILARDOMAIN', 'CO_HOSTED_SITE', 'DARKNET_MENTION_URL']
 
     # What events this module produces
     # This is to support the end user in selecting modules based on events
@@ -62,9 +66,9 @@ class sfp_crossref(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
-        # The SIMILARDOMAIN and CO_HOSTED_SITE events supply domains, 
+        # The SIMILARDOMAIN and CO_HOSTED_SITE events supply domains,
         # not URLs. Assume HTTP.
         if eventName in ['SIMILARDOMAIN', 'CO_HOSTED_SITE']:
             eventData = 'http://' + eventData.lower()
@@ -78,11 +82,13 @@ class sfp_crossref(SpiderFootPlugin):
             self.sf.debug("Ignoring " + eventData + " as already tested")
             return
         else:
-            self.fetched.append(eventData)
+            self.fetched[eventData] = True
 
         self.sf.debug("Testing for affiliation: " + eventData)
         res = self.sf.fetchUrl(eventData, timeout=self.opts['_fetchtimeout'],
-                               useragent=self.opts['_useragent'])
+                               useragent=self.opts['_useragent'],
+                               sizeLimit=10000000,
+                               verify=False)
 
         if res['content'] is None:
             self.sf.debug("Ignoring " + eventData + " as no data returned")
@@ -91,7 +97,7 @@ class sfp_crossref(SpiderFootPlugin):
         matched = False
         for name in self.getTarget().getNames():
             # Search for mentions of our host/domain in the external site's data
-            pat = re.compile("([\.\'\/\"\ ]" + name + "[\.\'\/\"\ ])", re.IGNORECASE)
+            pat = re.compile(r"([\.\'\/\"\ ]" + name + r"[\.\'\/\"\ ])", re.IGNORECASE)
             matches = re.findall(pat, res['content'])
 
             if len(matches) > 0:
@@ -108,13 +114,15 @@ class sfp_crossref(SpiderFootPlugin):
                 if url in self.fetched:
                     return None
                 else:
-                    self.fetched.append(url)
+                    self.fetched[url] = True
 
                 res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'],
-                                       useragent=self.opts['_useragent'])
+                                       useragent=self.opts['_useragent'],
+                                       sizeLimit=10000000,
+                                       verify=False)
                 if res['content'] is not None:
                     for name in self.getTarget().getNames():
-                        pat = re.compile("([\.\'\/\"\ ]" + name + "[\'\/\"\ ])",
+                        pat = re.compile(r"([\.\'\/\"\ ]" + name + r"[\'\/\"\ ])",
                                          re.IGNORECASE)
                         matches = re.findall(pat, res['content'])
 

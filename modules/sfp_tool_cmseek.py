@@ -11,15 +11,29 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-from subprocess import Popen, PIPE
 import io
 import json
 import os.path
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+from subprocess import PIPE, Popen
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_tool_cmseek(SpiderFootPlugin):
-    """Tool - CMSeeK:Footprint,Investigate:Content Analysis:tool:Identify what Content Management System (CMS) might be used."""
 
+    meta = {
+        'name': "Tool - CMSeeK",
+        'summary': "Identify what Content Management System (CMS) might be used.",
+        'flags': ["tool"],
+        'useCases': ["Footprint", "Investigate"],
+        'categories': ["Content Analysis"],
+        'toolDetails': {
+            'name': "CMSeeK",
+            'description': "CMSeek is a tool that is used to extract Content Management System(CMS) details of a website.",
+            'website': 'https://github.com/Tuhinshubhra/CMSeeK',
+            'repository': 'https://github.com/Tuhinshubhra/CMSeeK'
+        },
+    }
 
     # Default options
     opts = {
@@ -38,11 +52,11 @@ class sfp_tool_cmseek(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.errorState = False
         self.__dataSource__ = "Target Website"
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -61,7 +75,7 @@ class sfp_tool_cmseek(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if self.errorState:
             return None
@@ -118,7 +132,7 @@ class sfp_tool_cmseek(SpiderFootPlugin):
                 f = io.open(resultpath + "/" + eventData + "/cms.json", encoding='utf-8')
                 j = json.loads(f.read())
                 evt = SpiderFootEvent("WEBSERVER_TECHNOLOGY", j['cms_name'],
-                                       self.__name__, event)
+                                      self.__name__, event)
                 self.notifyListeners(evt)
             except BaseException as e:
                 self.sf.error("Couldn't parse the JSON output of CMSeeK: " + str(e), False)

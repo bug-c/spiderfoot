@@ -14,11 +14,33 @@
 import json
 import re
 import time
-import urllib
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_openstreetmap(SpiderFootPlugin):
-    """OpenStreetMap:Footprint,Investigate,Passive:Real World::Retrieves latitude/longitude coordinates for physical addresses from OpenStreetMap API."""
+
+    meta = {
+        'name': "OpenStreetMap",
+        'summary': "Retrieves latitude/longitude coordinates for physical addresses from OpenStreetMap API.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Real World"],
+        'dataSource': {
+            'website': "https://www.openstreetmap.org/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://wiki.openstreetmap.org/wiki/API",
+                "https://wiki.openstreetmap.org/wiki/API_v0.6"
+            ],
+            'favIcon': "https://www.openstreetmap.org/assets/osm_logo-b7061f13a03615f787a7e0e56a0db5252eb2a217ab063183e78526a8cc10989b.svg",
+            'logo': "https://www.openstreetmap.org/assets/osm_logo-b7061f13a03615f787a7e0e56a0db5252eb2a217ab063183e78526a8cc10989b.svg",
+            'description': "OpenStreetMap powers map data on thousands of web sites, mobile apps, and hardware devices.",
+        }
+    }
 
     opts = {
     }
@@ -26,13 +48,13 @@ class sfp_openstreetmap(SpiderFootPlugin):
     optdescs = {
     }
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -47,13 +69,13 @@ class sfp_openstreetmap(SpiderFootPlugin):
     # https://operations.osmfoundation.org/policies/nominatim/
     def query(self, qry):
         params = {
-            'q': qry.encode('raw_unicode_escape'),
+            'q': qry.encode('raw_unicode_escape').decode("ascii", errors='replace'),
             'format': 'json',
             'polygon': '0',
             'addressdetails': '0'
         }
 
-        res = self.sf.fetchUrl("https://nominatim.openstreetmap.org/search?" + urllib.urlencode(params),
+        res = self.sf.fetchUrl("https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(params),
                                timeout=self.opts['_fetchtimeout'], useragent='SpiderFoot')
 
         if res['content'] is None:
@@ -63,7 +85,7 @@ class sfp_openstreetmap(SpiderFootPlugin):
         try:
             data = json.loads(res['content'])
         except Exception as e:
-            self.sf.debug("Error processing JSON response: " + str(e))
+            self.sf.debug(f"Error processing JSON response: {e}")
             return None
 
         return data
@@ -74,10 +96,10 @@ class sfp_openstreetmap(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
         else:
             self.results[eventData] = True
@@ -89,11 +111,13 @@ class sfp_openstreetmap(SpiderFootPlugin):
             self.sf.debug("Skipping PO BOX address")
             return None
 
+        rx1 = re.compile(r'^(c/o|care of|attn:|attention:)\s+[0-9a-z\s\.]', flags=re.IGNORECASE)
         # Remove address prefixes for delivery instructions
-        address = re.sub(r'^(c/o|care of|attn:|attention:)\s+[0-9a-z\s\.],', r'', address, flags=re.IGNORECASE)
+        address = re.sub(rx1, r'', address)
 
+        rx2 = re.compile(r'^(Level|Floor|Suite|Room)\s+[0-9a-z]+,', flags=re.IGNORECASE)
         # Remove address prefixes known to return no results (floor, level, suite, etc).
-        address = re.sub(r'^(Level|Floor|Suite|Room)\s+[0-9a-z]+,', r'', address, flags=re.IGNORECASE)
+        address = re.sub(rx2, r'', address)
 
         # Search for address
         data = self.query(eventData)

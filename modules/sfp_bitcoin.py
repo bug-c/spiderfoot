@@ -11,27 +11,34 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-try:
-    import re2 as re
-except ImportError:
-    import re
+import codecs
+import re
 from hashlib import sha256
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_bitcoin(SpiderFootPlugin):
-    """Bitcoin Finder:Footprint,Investigate:Content Analysis::Identify bitcoin addresses in scraped webpages."""
 
+    meta = {
+        'name': "Bitcoin Finder",
+        'summary': "Identify bitcoin addresses in scraped webpages.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Content Analysis"]
+    }
 
     # Default options
     opts = {}
+    optdescs = {}
 
-    results = list()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = list()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -46,9 +53,9 @@ class sfp_bitcoin(SpiderFootPlugin):
 
     def to_bytes(self, n, length):
         h = '%x' % n
-        s = ('0'*(len(h) % 2) + h).zfill(length*2).decode('hex')
+        s = codecs.decode(('0'*(len(h) % 2) + h).zfill(length*2), "hex")
         return s
-      
+
     def decode_base58(self, bc, length):
         digits58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
         n = 0
@@ -59,7 +66,7 @@ class sfp_bitcoin(SpiderFootPlugin):
     def check_bc(self, bc):
         bcbytes = self.decode_base58(bc, 25)
         return bcbytes[-4:] == sha256(sha256(bcbytes[:-4]).digest()).digest()[:4]
- 
+
     # Handle events sent to this module
     def handleEvent(self, event):
         eventName = event.eventType
@@ -70,12 +77,12 @@ class sfp_bitcoin(SpiderFootPlugin):
         if sourceData in self.results:
             return None
         else:
-            self.results.append(sourceData)
+            self.results[sourceData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # thanks to https://stackoverflow.com/questions/21683680/regex-to-match-bitcoin-addresses
-        matches = re.findall("[\s:=\>]([13][a-km-zA-HJ-NP-Z1-9]{25,34})", eventData)
+        matches = re.findall(r"[\s:=\>]([13][a-km-zA-HJ-NP-Z1-9]{25,34})", eventData)
         for m in matches:
             self.sf.debug("Bitcoin potential match: " + m)
             if self.check_bc(m):

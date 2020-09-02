@@ -10,12 +10,18 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_intfiles(SpiderFootPlugin):
-    """Interesting Files:Footprint:Crawling and Scanning::Identifies potential files of interest, e.g. office documents, zip files."""
 
+    meta = {
+        'name': "Interesting File Finder",
+        'summary': "Identifies potential files of interest, e.g. office documents, zip files.",
+        'flags': [""],
+        'useCases': ["Footprint", "Passive"],
+        'categories': ["Crawling and Scanning"]
+    }
 
     # Default options
     opts = {
@@ -27,13 +33,14 @@ class sfp_intfiles(SpiderFootPlugin):
         'fileexts': "File extensions of files you consider interesting."
     }
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
+        self.__dataSource__ = "Target Website"
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -52,7 +59,7 @@ class sfp_intfiles(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
             return None

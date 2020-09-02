@@ -12,10 +12,37 @@
 
 import json
 import time
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_metadefender(SpiderFootPlugin):
-    """MetaDefender:Footprint,Investigate,Passive:Reputation Systems:apikey:Search MetaDefender API for IP address and domain IP reputation."""
+
+    meta = {
+        'name': "MetaDefender",
+        'summary': "Search MetaDefender API for IP address and domain IP reputation.",
+        'flags': ["apikey"],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://metadefender.opswat.com/",
+            'model': "FREE_AUTH_LIMITED",
+            'references': [
+                "https://onlinehelp.opswat.com/mdcloud/"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://metadefender.opswat.com/",
+                "Register a free account",
+                "Navigate to https://metadefender.opswat.com/account",
+                "The API key is listed under 'API key'"
+            ],
+            'favIcon': "https://mcl-cdn.opswat.com/1.40.3-729f31db/city/icons/icon-48x48.png?v=61be50566cce944a710aaa90ba6bbb8d",
+            'logo': "https://mcl-cdn.opswat.com/1.40.3-729f31db/city/icons/icon-48x48.png?v=61be50566cce944a710aaa90ba6bbb8d",
+            'description': "File Analysis - Analyzing binaries with 30+ anti-malware engines.\n"
+                               "Heuristic analysis to detect more unknown and targeted attacks.\n"
+                               "Binary vulnerability data assessment, IP/Domain reputation, Threat Intelligence Feeds",
+        }
+    }
 
     # Default options
     opts = {
@@ -40,7 +67,7 @@ class sfp_metadefender(SpiderFootPlugin):
         self.results = self.tempStorage()
         self.errorState = False
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -106,7 +133,7 @@ class sfp_metadefender(SpiderFootPlugin):
         try:
             data = json.loads(res['content'])
         except Exception as e:
-            self.sf.debug("Error processing JSON response.")
+            self.sf.debug(f"Error processing JSON response: {e}")
             return None
 
         return data
@@ -130,7 +157,7 @@ class sfp_metadefender(SpiderFootPlugin):
 
         self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventName == 'IP_ADDRESS':
             data = self.queryIp(eventData)
@@ -142,7 +169,7 @@ class sfp_metadefender(SpiderFootPlugin):
             geo_info = data.get('geo_info')
 
             if geo_info:
-                location = ', '.join(filter(None, [geo_info.get('city').get('name'), geo_info.get('country').get('name')]))
+                location = ', '.join([_f for _f in [geo_info.get('city').get('name'), geo_info.get('country').get('name')] if _f])
                 evt = SpiderFootEvent('GEOINFO', location, self.__name__, event)
                 self.notifyListeners(evt)
 

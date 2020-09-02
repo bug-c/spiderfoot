@@ -12,12 +12,19 @@
 # -------------------------------------------------------------------------------
 
 from netaddr import IPAddress
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_hosting(SpiderFootPlugin):
-    """Hosting Providers:Footprint,Investigate,Passive:Crawling and Scanning::Find out if any IP addresses identified fall within known 3rd party hosting ranges, e.g. Amazon, Azure, etc."""
 
+    meta = {
+        'name': "Hosting Provider Identifier",
+        'summary': "Find out if any IP addresses identified fall within known 3rd party hosting ranges, e.g. Amazon, Azure, etc.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Content Analysis"]
+    }
 
     # Default options
     opts = {
@@ -28,14 +35,14 @@ class sfp_hosting(SpiderFootPlugin):
     }
 
     # Target
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.__dataSource__ = "DNS"
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -65,8 +72,8 @@ class sfp_hosting(SpiderFootPlugin):
             if "," not in line:
                 continue
             try:
-                [start,end,title,url] = line.split(",")
-            except BaseException as e:
+                [start, end, title, url] = line.split(",")
+            except BaseException:
                 continue
 
             try:
@@ -84,7 +91,7 @@ class sfp_hosting(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
             return None

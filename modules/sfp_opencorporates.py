@@ -12,10 +12,32 @@
 # -------------------------------------------------------------------------------
 
 import json
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_opencorporates(SpiderFootPlugin):
-    """OpenCorporates:Passive,Footprint,Investigate:Search Engines::Look up company information from OpenCorporates."""
+
+    meta = {
+        'name': "OpenCorporates",
+        'summary': "Look up company information from OpenCorporates.",
+        'flags': [""],
+        'useCases': ["Passive", "Footprint", "Investigate"],
+        'categories': ["Search Engines"],
+        'dataSource': {
+            'website': "https://opencorporates.com",
+            'model': "FREE_NOAUTH_LIMITED",
+            'references': [
+                "https://api.opencorporates.com/documentation/API-Reference"
+            ],
+            'favIcon': "https://opencorporates.com/assets/favicons/favicon.png",
+            'logo': "https://opencorporates.com/contents/ui/theme/img/oc-logo.svg",
+            'description': "The largest open database of companies in the world.\n"
+                                "As the largest, open database of companies in the world, "
+                                "our business is making high-quality, official company data openly available. "
+                                "Data that can be trusted, accessed, analysed and interrogated when and how it’s needed.",
+        }
+    }
 
     # Default options
     opts = {
@@ -29,30 +51,26 @@ class sfp_opencorporates(SpiderFootPlugin):
         'api_key': 'OpenCorporates.com API key.'
     }
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.__dataSource__ = "OpenCorporates"
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return [ "COMPANY_NAME" ]
+        return ["COMPANY_NAME"]
 
     # What events this module produces
     def producedEvents(self):
-        return [ "COMPANY_NAME", "PHYSICAL_ADDRESS", "RAW_RIR_DATA" ]
+        return ["COMPANY_NAME", "PHYSICAL_ADDRESS", "RAW_RIR_DATA"]
 
     # Search for company name
     # https://api.opencorporates.com/documentation/API-Reference
     def searchCompany(self, qry):
-        if type(qry) != unicode:
-            qry = qry.encode("utf-8", errors="replace")
-
         apiparam = ""
         if not self.opts['api_key'] == "":
             apiparam = "&api_token=" + self.opts['api_key']
@@ -75,7 +93,7 @@ class sfp_opencorporates(SpiderFootPlugin):
         try:
             data = json.loads(res['content'])
         except Exception as e:
-            self.sf.debug("Error processing JSON response: " + str(e))
+            self.sf.debug(f"Error processing JSON response: {e}")
             return None
 
         if 'results' not in data:
@@ -105,14 +123,13 @@ class sfp_opencorporates(SpiderFootPlugin):
         try:
             data = json.loads(res['content'])
         except Exception as e:
-            self.sf.debug("Error processing JSON response: " + str(e))
+            self.sf.debug(f"Error processing JSON response: {e}")
             return None
 
         if 'results' not in data:
             return None
 
         return data['results']
-
 
     # Extract company address, previous names, and officer names
     def extractCompanyDetails(self, company, sevt):
@@ -164,12 +181,12 @@ class sfp_opencorporates(SpiderFootPlugin):
         eventData = event.data
 
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
         else:
             self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Search for the company
         res = self.searchCompany(eventData + "*")

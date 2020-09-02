@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # -------------------------------------------------------------------------------
 # Name:         sfp_azureblobstorage
-# Purpose:      SpiderFoot plug-in for identifying potential Azure blobs related 
+# Purpose:      SpiderFoot plug-in for identifying potential Azure blobs related
 #               to the target.
 #
 # Author:      Steve Micallef <steve@binarypool.com>
@@ -13,11 +13,23 @@
 
 import threading
 import time
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_azureblobstorage(SpiderFootPlugin):
-    """Azure Blob Finder:Footprint,Passive:Crawling and Scanning::Search for potential Azure blobs associated with the target and attempt to list their contents."""
 
+    meta = {
+        'name': "Azure Blob Finder",
+        'summary': "Search for potential Azure blobs associated with the target and attempt to list their contents.",
+        'flags': [""],
+        'useCases': ["Footprint", "Passive"],
+        'categories': ["Crawling and Scanning"],
+        'dataSource': {
+            'website': "https://azure.microsoft.com/en-in/services/storage/blobs/",
+            'model': "FREE_NOAUTH_UNLIMITED"
+        }
+    }
 
     # Default options
     opts = {
@@ -27,12 +39,12 @@ class sfp_azureblobstorage(SpiderFootPlugin):
 
     # Option descriptions
     optdescs = {
-        "suffixes": "List of suffixes to append to domains tried as blob storage names"
+        "suffixes": "List of suffixes to append to domains tried as blob storage names",
+        "_maxthreads": "Maximum threads"
     }
 
     results = None
     s3results = None
-    lock = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
@@ -40,7 +52,7 @@ class sfp_azureblobstorage(SpiderFootPlugin):
         self.results = self.tempStorage()
         self.lock = threading.Lock()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -61,7 +73,6 @@ class sfp_azureblobstorage(SpiderFootPlugin):
                 self.s3results[url] = True
 
     def threadSites(self, siteList):
-        ret = list()
         self.s3results = dict()
         running = True
         i = 0
@@ -72,7 +83,7 @@ class sfp_azureblobstorage(SpiderFootPlugin):
                 return None
 
             self.sf.info("Spawning thread to check bucket: " + site)
-            t.append(threading.Thread(name='sfp_azureblobstorages_' + site,
+            t.append(threading.Thread(name='thread_sfp_azureblobstorages_' + site,
                                       target=self.checkSite, args=(site,)))
             t[i].start()
             i += 1
@@ -81,7 +92,7 @@ class sfp_azureblobstorage(SpiderFootPlugin):
         while running:
             found = False
             for rt in threading.enumerate():
-                if rt.name.startswith("sfp_azureblobstorages_"):
+                if rt.name.startswith("thread_sfp_azureblobstorages_"):
                     found = True
 
             if not found:
@@ -100,10 +111,10 @@ class sfp_azureblobstorage(SpiderFootPlugin):
         for site in sites:
             if i >= self.opts['_maxthreads']:
                 data = self.threadSites(siteList)
-                if data == None:
+                if data is None:
                     return res
 
-                for ret in data.keys():
+                for ret in list(data.keys()):
                     if data[ret]:
                         res.append(ret)
                 i = 0
@@ -125,7 +136,7 @@ class sfp_azureblobstorage(SpiderFootPlugin):
         else:
             self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventName == "LINKED_URL_EXTERNAL":
             if ".blob.core.windows.net" in eventData:
@@ -134,7 +145,11 @@ class sfp_azureblobstorage(SpiderFootPlugin):
                 self.notifyListeners(evt)
             return None
 
-        targets = [ eventData.replace('.', ''), self.sf.domainKeyword(eventData, self.opts['_internettlds']) ]
+        targets = [eventData.replace('.', '')]
+        kw = self.sf.domainKeyword(eventData, self.opts['_internettlds'])
+        if kw:
+            targets.append(kw)
+
         urls = list()
         for t in targets:
             suffixes = [''] + self.opts['suffixes'].split(',')

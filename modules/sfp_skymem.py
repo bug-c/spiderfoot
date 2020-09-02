@@ -12,14 +12,31 @@
 # -------------------------------------------------------------------------------
 
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_skymem(SpiderFootPlugin):
-    """Skymem:Footprint,Investigate,Passive:Search Engines::Look up e-mail addresses on Skymem."""
 
+    meta = {
+        'name': "Skymem",
+        'summary': "Look up e-mail addresses on Skymem.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Search Engines"],
+        'dataSource': {
+            'website': "http://www.skymem.info/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "http://www.skymem.info/faq"
+            ],
+            'favIcon': "https://www.google.com/s2/favicons?domain=http://www.skymem.info/",
+            'logo': "",
+            'description': "Find email addresses of companies and people.",
+        }
+    }
 
-    results = dict()
+    results = None
 
     # Default options
     opts = {
@@ -31,21 +48,20 @@ class sfp_skymem(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.__dataSource__ = "Skymem"
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return ["DOMAIN_NAME"]
+        return ['INTERNET_NAME', "DOMAIN_NAME"]
 
     # What events this module produces
     # This is to support the end user in selecting modules based on events
     # produced.
     def producedEvents(self):
-        return ["EMAILADDR"]
+        return ["EMAILADDR", "EMAILADDR_GENERIC"]
 
     # Handle events sent to this module
     def handleEvent(self, event):
@@ -58,7 +74,7 @@ class sfp_skymem(SpiderFootPlugin):
         else:
             self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Get e-mail addresses on this domain
         res = self.sf.fetchUrl("http://www.skymem.info/srch?q=" + eventData, timeout=self.opts['_fetchtimeout'], useragent=self.opts['_useragent'])
@@ -67,35 +83,24 @@ class sfp_skymem(SpiderFootPlugin):
             return None
 
         # Extract emails from results page
-        pat = re.compile("([a-zA-Z\.0-9_\-]+@[a-zA-Z\.0-9\-]+\.[a-zA-Z\.0-9\-]+)")
-        matches = re.findall(pat, res['content'])
-        if not matches:
-            return None
+        emails = self.sf.parseEmails(res['content'])
 
-        for match in matches:
-            self.sf.debug("Found possible email: " + match)
-
-            # Handle false positive matches
-            if len(match) < 5:
-                self.sf.debug("Likely invalid address.")
-                continue
-
-            # Handle messed up encodings
-            if "%" in match:
-                self.sf.debug("Skipped address: " + match)
-                continue
-
+        for email in emails:
             # Skip unrelated emails
-            mailDom = match.lower().split('@')[1]
+            mailDom = email.lower().split('@')[1]
             if not self.getTarget().matches(mailDom):
-                self.sf.debug("Skipped address: " + match)
+                self.sf.debug("Skipped address: " + email)
                 continue
 
-            self.sf.info("Found e-mail address: " + match)
-            if match not in self.results:
-                evt = SpiderFootEvent("EMAILADDR", match, self.__name__, event)
+            self.sf.info("Found e-mail address: " + email)
+            if email not in self.results:
+                if email.split("@")[0] in self.opts['_genericusers'].split(","):
+                    evttype = "EMAILADDR_GENERIC"
+                else:
+                    evttype = "EMAILADDR"
+                evt = SpiderFootEvent(evttype, email, self.__name__, event)
                 self.notifyListeners(evt)
-                self.results[match] = True
+                self.results[email] = True
 
         # Loop through first 20 pages of results
         domain_ids = re.findall(r'<a href="/domain/([a-z0-9]+)\?p=', res['content'])
@@ -111,36 +116,27 @@ class sfp_skymem(SpiderFootPlugin):
             if res['content'] is None:
                 break
 
-            pat = re.compile("([a-zA-Z\.0-9_\-]+@[a-zA-Z\.0-9\-]+\.[a-zA-Z\.0-9\-]+)")
-            matches = re.findall(pat, res['content'])
-            for match in matches:
-                self.sf.debug("Found possible email: " + match)
-
-                # Handle false positive matches
-                if len(match) < 5:
-                    self.sf.debug("Likely invalid address.")
-                    continue
-
-                # Handle messed up encodings
-                if "%" in match:
-                    self.sf.debug("Skipped address: " + match)
-                    continue
-
+            emails = self.sf.parseEmails(res['content'])
+            for email in emails:
                 # Skip unrelated emails
-                mailDom = match.lower().split('@')[1]
+                mailDom = email.lower().split('@')[1]
                 if not self.getTarget().matches(mailDom):
-                    self.sf.debug("Skipped address: " + match)
+                    self.sf.debug("Skipped address: " + email)
                     continue
 
-                self.sf.info("Found e-mail address: " + match)
-                if match not in self.results:
-                    evt = SpiderFootEvent("EMAILADDR", match, self.__name__, event)
+                self.sf.info("Found e-mail address: " + email)
+                if email not in self.results:
+                    if email.split("@")[0] in self.opts['_genericusers'].split(","):
+                        evttype = "EMAILADDR_GENERIC"
+                    else:
+                        evttype = "EMAILADDR"
+                    evt = SpiderFootEvent(evttype, email, self.__name__, event)
                     self.notifyListeners(evt)
-                    self.results[match] = True
+                    self.results[email] = True
 
             # Check if we're on the last page of results
             max_page = 0
-            pages = re.findall(r'/domain/' + domain_id + '\?p=(\d+)', res['content'])
+            pages = re.findall(r'/domain/' + domain_id + r'\?p=(\d+)', res['content'])
             for p in pages:
                 if int(p) >= max_page:
                     max_page = int(p)

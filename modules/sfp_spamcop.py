@@ -12,14 +12,34 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import socket
 from netaddr import IPNetwork
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_spamcop(SpiderFootPlugin):
-    """SpamCop:Investigate,Passive:Reputation Systems::Query various spamcop databases for open relays, open proxies, vulnerable servers, etc."""
 
+    meta = {
+        'name': "SpamCop",
+        'summary': "Query various spamcop databases for open relays, open proxies, vulnerable servers, etc.",
+        'flags': [""],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://www.spamcop.net/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://www.spamcop.net/help.shtml",
+                "https://www.spamcop.net/bl.shtml",
+                "https://www.spamcop.net/fom-serve/cache/291.html"
+            ],
+            'favIcon': "https://www.spamcop.net/images/favicon.ico",
+            'logo': "https://www.spamcop.net/images/05logo.png",
+            'description': "SpamCop is the premier service for reporting spam. "
+                                "SpamCop determines the origin of unwanted email and reports it "
+                                "to the relevant Internet service providers.",
+        }
+    }
 
     # Default options
     opts = {
@@ -38,7 +58,7 @@ class sfp_spamcop(SpiderFootPlugin):
     }
 
     # Target
-    results = dict()
+    results = None
 
     # Whole bunch here:
     # http://en.wikipedia.org/wiki/Comparison_of_DNS_blacklists
@@ -50,9 +70,9 @@ class sfp_spamcop(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -81,8 +101,11 @@ class sfp_spamcop(SpiderFootPlugin):
             try:
                 lookup = self.reverseAddr(qaddr) + "." + domain
                 self.sf.debug("Checking Blacklist: " + lookup)
-                addrs = self.sf.normalizeDNS(socket.gethostbyname_ex(lookup))
+                addrs = self.sf.resolveHost(lookup)
                 self.sf.debug("Addresses returned: " + str(addrs))
+
+                if not addrs:
+                    continue
 
                 text = None
                 for addr in addrs:
@@ -90,7 +113,7 @@ class sfp_spamcop(SpiderFootPlugin):
                         text = self.checks[domain] + " (" + qaddr + ")"
                         break
                     else:
-                        if str(addr) not in self.checks[domain].keys():
+                        if str(addr) not in list(self.checks[domain].keys()):
                             self.sf.debug("Return code not found in list: " + str(addr))
                             continue
 
@@ -122,9 +145,8 @@ class sfp_spamcop(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
         parentEvent = event
-        addrlist = list()
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
             return None
@@ -135,9 +157,9 @@ class sfp_spamcop(SpiderFootPlugin):
                 return None
             else:
                 if IPNetwork(eventData).prefixlen < self.opts['maxnetblock']:
-                    self.sf.debug("Network size bigger than permitted: " +
-                                  str(IPNetwork(eventData).prefixlen) + " > " +
-                                  str(self.opts['maxnetblock']))
+                    self.sf.debug("Network size bigger than permitted: "
+                                  + str(IPNetwork(eventData).prefixlen) + " > "
+                                  + str(self.opts['maxnetblock']))
                     return None
 
         if eventName == 'NETBLOCK_MEMBER':
@@ -145,9 +167,9 @@ class sfp_spamcop(SpiderFootPlugin):
                 return None
             else:
                 if IPNetwork(eventData).prefixlen < self.opts['maxsubnet']:
-                    self.sf.debug("Network size bigger than permitted: " +
-                                  str(IPNetwork(eventData).prefixlen) + " > " +
-                                  str(self.opts['maxsubnet']))
+                    self.sf.debug("Network size bigger than permitted: "
+                                  + str(IPNetwork(eventData).prefixlen) + " > "
+                                  + str(self.opts['maxsubnet']))
                     return None
 
         if eventName.startswith("NETBLOCK_"):

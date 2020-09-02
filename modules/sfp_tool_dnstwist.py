@@ -11,14 +11,31 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-from subprocess import Popen, PIPE
 import json
 import os.path
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+from subprocess import PIPE, Popen
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_tool_dnstwist(SpiderFootPlugin):
-    """Tool - DNSTwist:Footprint,Investigate:DNS:tool:Identify bit-squatting, typo and other similar domains to the target using a local DNSTwist installation."""
 
+    meta = {
+        'name': "Tool - DNSTwist",
+        'summary': "Identify bit-squatting, typo and other similar domains to the target using a local DNSTwist installation.",
+        'flags': ["tool"],
+        'useCases': ["Footprint", "Investigate"],
+        'categories': ["DNS"],
+        'toolDetails': {
+            'name': "DNSTwist",
+            'description': "See what sort of trouble users can get in trying to type your domain name. "
+                                "Find lookalike domains that adversaries can use to attack you. "
+                                "Can detect typosquatters, phishing attacks, fraud, and brand impersonation. "
+                                "Useful as an additional source of targeted threat intelligence.",
+            'website': 'https://github.com/elceef/dnstwist',
+            'repository': 'https://github.com/elceef/dnstwist'
+        },
+    }
 
     # Default options
     opts = {
@@ -37,11 +54,11 @@ class sfp_tool_dnstwist(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.errorState = False
         self.__dataSource__ = "DNS"
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -60,7 +77,7 @@ class sfp_tool_dnstwist(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if self.errorState:
             return None
@@ -110,8 +127,11 @@ class sfp_tool_dnstwist(SpiderFootPlugin):
             try:
                 j = json.loads(content)
                 for r in j:
+                    if self.getTarget().matches(r['domain-name']):
+                        continue
+
                     evt = SpiderFootEvent("SIMILARDOMAIN", r['domain-name'],
-                                           self.__name__, event)
+                                          self.__name__, event)
                     self.notifyListeners(evt)
             except BaseException as e:
                 self.sf.error("Couldn't parse the JSON output of DNSTwist: " + str(e), False)

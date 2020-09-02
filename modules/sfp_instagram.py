@@ -11,13 +11,33 @@
 
 import json
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_instagram(SpiderFootPlugin):
-    """Instagram:Footprint,Investigate,Passive:Social Media::Gather information from Instagram profiles."""
+
+    meta = {
+        'name': "Instagram",
+        'summary': "Gather information from Instagram profiles.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Social Media"],
+        'dataSource': {
+            'website': "https://www.instagram.com/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://www.instagram.com/developer/",
+                "https://developers.facebook.com/docs/instagram-basic-display-api"
+            ],
+            'favIcon': "https://www.instagram.com/static/images/ico/favicon-192.png/68d99ba29cc8.png",
+            'logo': "https://www.instagram.com/static/images/ico/favicon-192.png/68d99ba29cc8.png",
+            'description': "Instagram is an American photo and video sharing social networking service.",
+        }
+    }
 
     # Default options
-    opts = { 
+    opts = {
     }
 
     # Option descriptions
@@ -28,18 +48,18 @@ class sfp_instagram(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return [ 'SOCIAL_MEDIA' ]
+        return ['SOCIAL_MEDIA']
 
     # What events this module produces
     def producedEvents(self):
-        return [ 'RAW_RIR_DATA' ]
+        return ['RAW_RIR_DATA']
 
     # Extract profile JSON from HTML
     def extractJson(self, html):
@@ -52,7 +72,7 @@ class sfp_instagram(SpiderFootPlugin):
         try:
             data = json.loads(json_data[0])
         except BaseException as e:
-            self.sf.debug('Error processing JSON response: ' + str(e))
+            self.sf.debug(f"Error processing JSON response: {e}")
             return None
 
         return data
@@ -68,12 +88,12 @@ class sfp_instagram(SpiderFootPlugin):
 
         self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Parse profile URL
         try:
             network = eventData.split(": ")[0]
-            url = eventData.split(": ")[1]
+            url = eventData.split(": ")[1].replace("<SFURL>", "").replace("</SFURL>", "")
         except BaseException as e:
             self.sf.error("Unable to parse SOCIAL_MEDIA: " +
                           eventData + " (" + str(e) + ")", False)
@@ -86,7 +106,7 @@ class sfp_instagram(SpiderFootPlugin):
 
         # Retrieve profile
         res = self.sf.fetchUrl(url,
-                               timeout=self.opts['_fetchtimeout'], 
+                               timeout=self.opts['_fetchtimeout'],
                                useragent=self.opts['_useragent'])
 
         if res['content'] is None:

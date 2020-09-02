@@ -11,13 +11,20 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import socket
 import dns.resolver
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_norton(SpiderFootPlugin):
-    """Norton ConnectSafe:Investigate,Passive:Reputation Systems::Check if a host would be blocked by Norton ConnectSafe DNS"""
+
+    meta = {
+        'name': "Norton ConnectSafe",
+        'summary': "Check if a host would be blocked by Norton ConnectSafe DNS",
+        'flags': [""],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"]
+    }
 
     # Default options
     opts = {
@@ -27,13 +34,13 @@ class sfp_norton(SpiderFootPlugin):
     optdescs = {
     }
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -49,13 +56,13 @@ class sfp_norton(SpiderFootPlugin):
 
     def queryAddr(self, qaddr):
         res = dns.resolver.Resolver()
-        res.nameservers = [ "199.85.126.20", "199.85.127.20" ]
+        res.nameservers = ["199.85.126.20", "199.85.127.20"]
 
         try:
             addrs = res.query(qaddr)
             self.sf.debug("Addresses returned: " + str(addrs))
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + qaddr)
+        except BaseException:
+            self.sf.debug(f"Unable to resolve {qaddr}")
             return False
 
         if addrs:
@@ -70,7 +77,7 @@ class sfp_norton(SpiderFootPlugin):
         parentEvent = event
         resolved = False
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
             return None
@@ -79,9 +86,9 @@ class sfp_norton(SpiderFootPlugin):
         # Check that it resolves first, as it becomes a valid
         # malicious host only if NOT resolved by Norton.
         try:
-            if self.sf.normalizeDNS(socket.gethostbyname_ex(eventData)):
+            if self.sf.resolveHost(eventData):
                 resolved = True
-        except BaseException as e:
+        except BaseException:
             return None
 
         if resolved:

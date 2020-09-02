@@ -9,13 +9,37 @@
 # Licence:     GPL
 #-------------------------------------------------------------------------------
 
+import base64
 import json
 import time
-import urllib
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_scylla(SpiderFootPlugin):
-    """Scylla:Footprint,Investigate,Passive:Leaks, Dumps and Breaches::Gather breach data from Scylla API."""
+
+    meta = {
+        'name': "Scylla",
+        'summary': "Gather breach data from Scylla API.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Leaks, Dumps and Breaches"],
+        'dataSource': {
+            'website': "https://scylla.sh/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://scylla.sh/crowdsource"
+            ],
+            'favIcon': "",
+            'logo': "",
+            'description': "scylla.sh has two major goals. One is to have a community-oriented database leak community "
+                                "that is a useful tool for security researchers.\n"
+                                "The other major goal is to undercut those people that are selling databases.",
+        }
+    }
 
     # Default options
     opts = {
@@ -26,8 +50,8 @@ class sfp_scylla(SpiderFootPlugin):
 
     # Option descriptions
     optdescs = {
-        'pause':     "Number of seconds to pause between fetches.",
-        'per_page':  "Maximum number of results per page.",
+        'pause': "Number of seconds to pause between fetches.",
+        'per_page': "Maximum number of results per page.",
         'max_pages': "Maximum number of pages of results to fetch."
     }
 
@@ -36,35 +60,41 @@ class sfp_scylla(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.errorState = False
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return [ 'INTERNET_NAME' ]
+        return ['DOMAIN_NAME']
 
     # What events this module produces
     def producedEvents(self):
-        return [ 'EMAILADDR_COMPROMISED', 'PASSWORD_COMPROMISED', 'HASH_COMPROMISED', 'RAW_RIR_DATA' ]
+        return ['EMAILADDR_COMPROMISED', 'PASSWORD_COMPROMISED', 'HASH_COMPROMISED', 'RAW_RIR_DATA']
 
     # Query Scylla API
     def query(self, qry, per_page=20, start=0):
         params = {
-            'q': 'Email:@' + qry.encode('raw_unicode_escape'),
+            'q': 'Email:@' + qry.encode('raw_unicode_escape').decode("ascii", errors='replace'),
             'num': str(per_page),
             'from': str(start)
         }
 
+        b64_auth = base64.b64encode("sammy:BasicPassword!".encode("utf-8"))
         headers = {
             'Accept': 'application/json',
+            # Provided by @_hyp3ri0n on Twitter, owner of the service and granted
+            # permission to hard-code these.
+            'Authorization': "Basic " + b64_auth.decode("utf-8")
         }
-        res = self.sf.fetchUrl('https://scylla.sh/search?' + urllib.urlencode(params),
+        res = self.sf.fetchUrl('https://scylla.sh/search?' + urllib.parse.urlencode(params),
                                headers=headers,
                                timeout=15,
-                               useragent=self.opts['_useragent'])
+                               useragent=self.opts['_useragent'],
+                               # expired certficate
+                               verify=False)
 
         time.sleep(self.opts['pause'])
 
@@ -80,7 +110,7 @@ class sfp_scylla(SpiderFootPlugin):
         try:
             data = json.loads(res['content'])
         except BaseException as e:
-            self.sf.debug('Error processing JSON response: ' + str(e))
+            self.sf.debug(f"Error processing JSON response: {e}")
             return None
 
         return data
@@ -99,7 +129,7 @@ class sfp_scylla(SpiderFootPlugin):
 
         self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         position = 0
         max_pages = int(self.opts['max_pages'])
@@ -110,6 +140,9 @@ class sfp_scylla(SpiderFootPlugin):
         passwords = list()
 
         while position < (per_page * max_pages):
+            if self.checkForStop():
+                return None
+
             if self.errorState:
                 break
 
@@ -135,10 +168,15 @@ class sfp_scylla(SpiderFootPlugin):
                 if not email:
                     continue
 
+                if not self.sf.validEmail(email):
+                    self.sf.debug("Skipping invalid email address: " + email)
+                    continue
+
                 mailDom = email.lower().split('@')[1]
+
                 # Skip unrelated emails
                 # Scylla sometimes returns broader results than the searched data
-                if not self.getTarget().matches(mailDom, includeChildren=True, includeParents=True):
+                if not self.getTarget().matches(mailDom):
                     self.sf.debug("Skipped address: " + email)
                     continue
 

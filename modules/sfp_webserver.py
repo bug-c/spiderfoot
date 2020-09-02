@@ -12,23 +12,32 @@
 # -------------------------------------------------------------------------------
 
 import json
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_webserver(SpiderFootPlugin):
-    """Web Server:Footprint,Investigate:Content Analysis::Obtain web server banners to identify versions of web servers being used."""
+
+    meta = {
+        'name': "Web Server Identifier",
+        'summary': "Obtain web server banners to identify versions of web servers being used.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Content Analysis"]
+    }
 
     # Default options
     opts = {}
+    optdescs = {}
 
-    results = dict()
+    results = None
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.__dataSource__ = "Target Website"
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -47,14 +56,13 @@ class sfp_webserver(SpiderFootPlugin):
         eventName = event.eventType
         srcModuleName = event.module
         eventData = event.data
-        parentEvent = event.sourceEvent
-        eventSource = event.sourceEvent.data
+        eventSource = event.actualSource
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
         if eventSource in self.results:
             return None
-        else:
-            self.results[eventSource] = True
+
+        self.results[eventSource] = True
 
         if not self.getTarget().matches(self.sf.urlFQDN(eventSource)):
             self.sf.debug("Not collecting web server information for external sites.")
@@ -62,9 +70,9 @@ class sfp_webserver(SpiderFootPlugin):
 
         try:
             jdata = json.loads(eventData)
-            if jdata == None:
+            if jdata is None:
                 return None
-        except BaseException as e:
+        except BaseException:
             self.sf.error("Received HTTP headers from another module in an unexpected format.", False)
             return None
 
@@ -72,10 +80,10 @@ class sfp_webserver(SpiderFootPlugin):
         if 'location' in jdata:
             if jdata['location'].startswith('http://') or jdata['location'].startswith('https://'):
                 if self.getTarget().matches(self.sf.urlFQDN(jdata['location'])):
-                    evt = SpiderFootEvent('LINKED_URL_INTERNAL', jdata['location'], self.__name__, parentEvent)
+                    evt = SpiderFootEvent('LINKED_URL_INTERNAL', jdata['location'], self.__name__, event)
                     self.notifyListeners(evt)
                 else:
-                    evt = SpiderFootEvent('LINKED_URL_EXTERNAL', jdata['location'], self.__name__, parentEvent)
+                    evt = SpiderFootEvent('LINKED_URL_EXTERNAL', jdata['location'], self.__name__, event)
                     self.notifyListeners(evt)
 
         # Check CSP header for linked URLs
@@ -84,10 +92,10 @@ class sfp_webserver(SpiderFootPlugin):
                 for string in directive.split(' '):
                     if string.startswith('http://') or string.startswith('https://'):
                         if self.getTarget().matches(self.sf.urlFQDN(string)):
-                            evt = SpiderFootEvent('LINKED_URL_INTERNAL', string, self.__name__, parentEvent)
+                            evt = SpiderFootEvent('LINKED_URL_INTERNAL', string, self.__name__, event)
                             self.notifyListeners(evt)
                         else:
-                            evt = SpiderFootEvent('LINKED_URL_EXTERNAL', string, self.__name__, parentEvent)
+                            evt = SpiderFootEvent('LINKED_URL_EXTERNAL', string, self.__name__, event)
                             self.notifyListeners(evt)
 
         # Could apply some smarts here, for instance looking for certain
@@ -96,19 +104,19 @@ class sfp_webserver(SpiderFootPlugin):
         # and other errors to see what the header looks like.
         if 'server' in jdata:
             evt = SpiderFootEvent("WEBSERVER_BANNER", jdata['server'],
-                                  self.__name__, parentEvent)
+                                  self.__name__, event)
             self.notifyListeners(evt)
 
             self.sf.info("Found web server: " + jdata['server'] + " (" + eventSource + ")")
 
         if 'x-powered-by' in jdata:
             evt = SpiderFootEvent("WEBSERVER_TECHNOLOGY", jdata['x-powered-by'],
-                                  self.__name__, parentEvent)
+                                  self.__name__, event)
             self.notifyListeners(evt)
             return None
 
         tech = None
-        if 'set-cookie'in jdata and 'PHPSESS' in jdata['set-cookie']:
+        if 'set-cookie' in jdata and 'PHPSESS' in jdata['set-cookie']:
             tech = "PHP"
 
         if 'set-cookie' in jdata and 'JSESSIONID' in jdata['set-cookie']:
@@ -127,7 +135,7 @@ class sfp_webserver(SpiderFootPlugin):
             tech = "PHP"
 
         if tech is not None:
-            evt = SpiderFootEvent("WEBSERVER_TECHNOLOGY", tech, self.__name__, parentEvent)
+            evt = SpiderFootEvent("WEBSERVER_TECHNOLOGY", tech, self.__name__, event)
             self.notifyListeners(evt)
 
 # End of sfp_webserver class

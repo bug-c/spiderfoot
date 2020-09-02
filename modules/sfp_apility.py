@@ -13,10 +13,37 @@
 
 import json
 import time
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_apility(SpiderFootPlugin):
-    """Apility:Footprint,Investigate,Passive:Reputation Systems:apikey:Search Apility API for IP address and domain reputation."""
+
+    meta = {
+        'name': "Apility",
+        'summary': "Search Apility API for IP address and domain reputation.",
+        'flags': ["apikey"],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://auth0.com/signals",
+            'model': "FREE_AUTH_LIMITED",
+            'references': [
+                "https://auth0.com/signals/docs/"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://auth0.com",
+                "Register a free account",
+                "Navigate to https://manage.auth0.com/dashboard/",
+                "Click on 'API'",
+                "The API key is listed under 'Auth0 Management API'"
+            ],
+            'favIcon': "https://cdn.auth0.com/styleguide/components/1.0.8/media/logos/img/favicon.png",
+            'logo': "https://auth0.com/signals/docs/images/signals-docs-logo.svg",
+            'description': "Malicious login traffic is detected with Auth0’s Anomaly Detection engine. "
+                                "This helps protect our customers from automated attacks, such as credential stuffing.",
+        }
+    }
 
     # Default options
     opts = {
@@ -41,7 +68,7 @@ class sfp_apility(SpiderFootPlugin):
         self.results = self.tempStorage()
         self.errorState = False
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -85,7 +112,6 @@ class sfp_apility(SpiderFootPlugin):
 
         return self.parseApiResponse(res)
 
- 
     # Query IP REST API
     # https://apility.io/apidocs/#full-ip-address-reputation
     # Note: currently unused
@@ -143,7 +169,7 @@ class sfp_apility(SpiderFootPlugin):
         try:
             data = json.loads(res['content'])
         except Exception as e:
-            self.sf.debug("Error processing JSON response.")
+            self.sf.debug(f"Error processing JSON response: {e}")
             return None
 
         return data
@@ -167,7 +193,7 @@ class sfp_apility(SpiderFootPlugin):
 
         self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventName == 'IP_ADDRESS':
             data = self.queryBadIp(eventData)
@@ -206,7 +232,7 @@ class sfp_apility(SpiderFootPlugin):
 
             if res.get('ip'):
                 ip_address = res.get('ip').get('address')
-                if ip_address:
+                if ip_address and self.sf.validIP(ip_address):
                     evt = SpiderFootEvent('IP_ADDRESS', ip_address, self.__name__, event)
                     self.notifyListeners(evt)
 
@@ -225,11 +251,15 @@ class sfp_apility(SpiderFootPlugin):
 
             if domain.get('mx'):
                 for mx in domain.get('mx'):
+                    if mx == '.':
+                        continue
                     evt = SpiderFootEvent('PROVIDER_MAIL', mx, self.__name__, event)
                     self.notifyListeners(evt)
 
             if domain.get('ns'):
                 for ns in domain.get('ns'):
+                    if ns == '.':
+                        continue
                     evt = SpiderFootEvent('PROVIDER_DNS', ns, self.__name__, event)
                     self.notifyListeners(evt)
 

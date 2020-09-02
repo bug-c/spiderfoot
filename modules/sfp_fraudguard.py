@@ -10,16 +10,46 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import json
 import base64
-from datetime import datetime
+import json
 import time
+from datetime import datetime
+
 from netaddr import IPNetwork
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_fraudguard(SpiderFootPlugin):
-    """Fraudguard:Investigate,Passive:Reputation Systems:apikey:Obtain threat information from Fraudguard.io"""
 
+    meta = {
+        'name': "Fraudguard",
+        'summary': "Obtain threat information from Fraudguard.io",
+        'flags': ["apikey"],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://fraudguard.io/",
+            'model': "FREE_AUTH_LIMITED",
+            'references': [
+                "https://docs.fraudguard.io/",
+                "https://faq.fraudguard.io/"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://app.fraudguard.io/register",
+                "Register a free account",
+                "Navigate to https://app.fraudguard.io/keys",
+                "The API key combination is listed under Username and Password"
+            ],
+            'favIcon': "https://fraudguard.io/img/favicon.ico",
+            'logo': "https://s3.amazonaws.com/fraudguard.io/img/header.png",
+            'description': "FraudGuard is a service designed to provide an easy way to validate usage "
+                                "by continuously collecting and analyzing real-time internet traffic. "
+                                "Utilizing just a few simple API endpoints we make integration as simple as possible "
+                                "and return data such as: Risk Level, Threat Type, Geo Location, etc. Super fast, super simple.\n"
+                                "Lookup any IP address by querying our threat engine.",
+        }
+    }
 
     # Default options
     opts = {
@@ -52,7 +82,7 @@ class sfp_fraudguard(SpiderFootPlugin):
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -61,18 +91,25 @@ class sfp_fraudguard(SpiderFootPlugin):
 
     # What events this module produces
     def producedEvents(self):
-        return [ "GEOINFO", "MALICIOUS_IPADDR", "MALICIOUS_NETBLOCK" ]
+        return ["GEOINFO", "MALICIOUS_IPADDR", "MALICIOUS_NETBLOCK"]
 
     def query(self, qry):
         fraudguard_url = "https://api.fraudguard.io/ip/" + qry
+        api_key_account = self.opts['fraudguard_api_key_account']
+        if type(api_key_account) == str:
+            api_key_account = api_key_account.encode('utf-8')
+        api_key_password = self.opts['fraudguard_api_key_password']
+        if type(api_key_password) == str:
+            api_key_password = api_key_password.encode('utf-8')
+        token = base64.b64encode(api_key_account + ':'.encode('utf-8') + api_key_password)
         headers = {
-            'Authorization': "Basic " + base64.b64encode(self.opts['fraudguard_api_key_account'] + ":" + self.opts['fraudguard_api_key_password'])
+            'Authorization': "Basic " + token.decode('utf-8')
         }
 
-        res = self.sf.fetchUrl(fraudguard_url , timeout=self.opts['_fetchtimeout'], 
+        res = self.sf.fetchUrl(fraudguard_url, timeout=self.opts['_fetchtimeout'],
                                useragent="SpiderFoot", headers=headers)
 
-        if res['code'] in [ "400", "429", "500", "403" ]:
+        if res['code'] in ["400", "429", "500", "403"]:
             self.sf.error("Fraudguard.io API key seems to have been rejected or you have exceeded usage limits for the month.", False)
             self.errorState = True
             return None
@@ -84,12 +121,10 @@ class sfp_fraudguard(SpiderFootPlugin):
         try:
             info = json.loads(res['content'])
         except Exception as e:
-            self.sf.error("Error processing JSON response from Fraudguard.io.", False)
+            self.sf.error(f"Error processing JSON response from Fraudguard.io: {e}", False)
             return None
 
-        #print str(info)
         return info
-
 
     # Handle events sent to this module
     def handleEvent(self, event):
@@ -100,7 +135,7 @@ class sfp_fraudguard(SpiderFootPlugin):
         if self.errorState:
             return None
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if self.opts['fraudguard_api_key_account'] == "" or self.opts['fraudguard_api_key_password'] == "":
             self.sf.error("You enabled sfp_fraudguard but did not set an API username/password!", False)
@@ -109,20 +144,19 @@ class sfp_fraudguard(SpiderFootPlugin):
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
-        else:
-            self.results[eventData] = True
+
+        self.results[eventData] = True
 
         if eventName == 'NETBLOCK_OWNER':
             if not self.opts['netblocklookup']:
                 return None
-            else:
-                if IPNetwork(eventData).prefixlen < self.opts['maxnetblock']:
-                    self.sf.debug("Network size bigger than permitted: " +
-                                  str(IPNetwork(eventData).prefixlen) + " > " +
-                                  str(self.opts['maxnetblock']))
-                    return None
+            if IPNetwork(eventData).prefixlen < self.opts['maxnetblock']:
+                self.sf.debug("Network size bigger than permitted: "
+                              + str(IPNetwork(eventData).prefixlen) + " > "
+                              + str(self.opts['maxnetblock']))
+                return None
 
         qrylist = list()
         rtype = ""
@@ -149,14 +183,23 @@ class sfp_fraudguard(SpiderFootPlugin):
                 if self.opts['age_limit_days'] > 0 and created_ts < age_limit_ts:
                     self.sf.debug("Record found but too old, skipping.")
                     continue
+
+                # For netblocks, we need to create the IP address event so that
+                # the threat intel event is more meaningful.
+                if eventName.startswith('NETBLOCK_'):
+                    pevent = SpiderFootEvent("IP_ADDRESS", addr, self.__name__, event)
+                    self.notifyListeners(pevent)
+                else:
+                    pevent = event
+
                 if "unknown" not in [rec['country'], rec['state'], rec['city']]:
                     dat = rec['country'] + ", " + rec['state'] + ", " + rec['city']
-                    e = SpiderFootEvent("GEOINFO", dat, self.__name__, event)
+                    e = SpiderFootEvent("GEOINFO", dat, self.__name__, pevent)
                     self.notifyListeners(e)
 
                 if rec.get('threat') != "unknown":
                     dat = rec['threat'] + " (risk level: " + rec['risk_level'] + ") [" + eventData + "]"
-                    e = SpiderFootEvent("MALICIOUS_" + rtype, dat, self.__name__, event)
+                    e = SpiderFootEvent("MALICIOUS_" + rtype, dat, self.__name__, pevent)
                     self.notifyListeners(e)
-    
+
 # End of sfp_fraudguard class

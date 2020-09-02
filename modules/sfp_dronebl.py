@@ -12,14 +12,34 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-import socket
 from netaddr import IPNetwork
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_dronebl(SpiderFootPlugin):
-    """DroneBL:Investigate,Passive:Reputation Systems::Query the DroneBL  database for open relays, open proxies, vulnerable servers, etc."""
 
+    meta = {
+        'name': "DroneBL",
+        'summary': "Query the DroneBL  database for open relays, open proxies, vulnerable servers, etc.",
+        'flags': [""],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://dronebl.org/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://dronebl.org/docs/howtouse",
+                "https://dronebl.org/rpckey_signup",
+                "https://dronebl.org/docs/rpc2"
+            ],
+            'favIcon': "https://dronebl.org/images/favicon.ico",
+            'logo': "https://dronebl.org/images/dronebl-logo.svg",
+            'description': "DroneBL is a realtime monitor of abusable IPs, which has "
+                                "the goal of stopping abuse of infected machines.\n"
+                                "A real-time tracker of abusable IPs.",
+        }
+    }
 
     # Default options
     opts = {
@@ -38,7 +58,7 @@ class sfp_dronebl(SpiderFootPlugin):
     }
 
     # Target
-    results = dict()
+    results = None
 
     # Whole bunch here:
     # http://en.wikipedia.org/wiki/Comparison_of_DNS_blacklists
@@ -63,9 +83,9 @@ class sfp_dronebl(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -94,7 +114,9 @@ class sfp_dronebl(SpiderFootPlugin):
             try:
                 lookup = self.reverseAddr(qaddr) + "." + domain
                 self.sf.debug("Checking Blacklist: " + lookup)
-                addrs = self.sf.normalizeDNS(socket.gethostbyname_ex(lookup))
+                addrs = self.sf.resolveHost(lookup)
+                if not addrs:
+                    continue
                 self.sf.debug("Addresses returned: " + str(addrs))
 
                 text = None
@@ -103,7 +125,7 @@ class sfp_dronebl(SpiderFootPlugin):
                         text = self.checks[domain] + " (" + qaddr + ")"
                         break
                     else:
-                        if str(addr) not in self.checks[domain].keys():
+                        if str(addr) not in list(self.checks[domain].keys()):
                             self.sf.debug("Return code not found in list: " + str(addr))
                             continue
 
@@ -135,9 +157,8 @@ class sfp_dronebl(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
         parentEvent = event
-        addrlist = list()
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if eventData in self.results:
             return None

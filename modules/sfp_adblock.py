@@ -12,14 +12,38 @@
 # -------------------------------------------------------------------------------
 
 import adblockparser
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_adblock(SpiderFootPlugin):
-    """AdBlock Check:Investigate:Reputation Systems::Check if linked pages would be blocked by AdBlock Plus."""
 
-
-
+    meta = {
+        'name': "AdBlock Check",
+        'summary': "Check if linked pages would be blocked by AdBlock Plus.",
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://adblockplus.org/",
+            'model': "FREE_AUTH_LIMITED",
+            'references': [
+                "https://help.eyeo.com/en/adblockplus/",
+                "https://adblockplus.org/en/download",
+                "https://chrome.google.com/webstore/detail/adblock-plus-free-ad-bloc/cfhdojbkjhnklbpkdaibdccddilifddb"
+            ],
+            'favIcon': "https://www.google.com/s2/favicons?domain=https://adblockplus.org/en/",
+            'logo': "https://adblockplus.org/img/navbar-logo.svg",
+            'description': "Adblock Plus is a free extension that allows you to customize your web experience."
+                                "You can block annoying ads, disable tracking and lots more."
+                                "It’s available for all major desktop browsers and for your mobile devices.\n"
+                                "Block ads that interrupt your browsing experience."
+                                "Say goodbye to video ads, pop-ups, flashing banners and more."
+                                "Blocking these annoyances means pages load faster.\n"
+                                "With Adblock Plus avoiding tracking and malware is easy."
+                                "Blocking intrusive ads reduces the risk of \"malvertising\" infections."
+                                "Blocking tracking stops companies following your online activity."
+        }
+    }
 
     # Default options
     opts = {
@@ -30,17 +54,17 @@ class sfp_adblock(SpiderFootPlugin):
         "blocklist": "AdBlockPlus block list."
     }
 
-    results = list()
+    results = None
     rules = None
     errorState = False
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = list()
+        self.results = self.tempStorage()
         self.rules = None
         self.errorState = False
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -59,7 +83,7 @@ class sfp_adblock(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if self.errorState:
             return None
@@ -84,7 +108,7 @@ class sfp_adblock(SpiderFootPlugin):
             pagetype = "_INTERNAL"
 
         if eventData not in self.results:
-            self.results.append(eventData)
+            self.results[eventData] = True
         else:
             self.sf.debug("Already checked this page for AdBlock matching, skipping.")
             return None

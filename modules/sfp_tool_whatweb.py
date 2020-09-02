@@ -11,14 +11,32 @@
 # Licence:     GPL
 # -------------------------------------------------------------------------------
 
-from subprocess import Popen, PIPE
-import io
 import json
 import os.path
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+from subprocess import PIPE, Popen
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_tool_whatweb(SpiderFootPlugin):
-    """Tool - WhatWeb:Footprint,Investigate:Content Analysis:tool:Identify what software is in use on the specified website."""
+
+    meta = {
+        'name': "Tool - WhatWeb",
+        'summary': "Identify what software is in use on the specified website.",
+        'flags': ["tool"],
+        'useCases': ["Footprint", "Investigate"],
+        'categories': ["Content Analysis"],
+        'toolDetails': {
+            'name': "WhatWeb",
+            'description': "WhatWeb identifies websites. Its goal is to answer the question, \"What is that Website?\". "
+                                "WhatWeb recognises web technologies including content management systems (CMS), "
+                                "blogging platforms, statistic/analytics packages, JavaScript libraries, web servers, and embedded devices. "
+                                "WhatWeb has over 1800 plugins, each to recognise something different. "
+                                "WhatWeb also identifies version numbers, email addresses, account IDs, web framework modules, SQL errors, and more.",
+            'website': 'https://github.com/urbanadventurer/whatweb',
+            'repository': 'https://github.com/urbanadventurer/whatweb'
+        },
+    }
 
     # Default options
     opts = {
@@ -39,11 +57,11 @@ class sfp_tool_whatweb(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.errorState = False
         self.__dataSource__ = "Target Website"
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     def watchedEvents(self):
@@ -57,7 +75,7 @@ class sfp_tool_whatweb(SpiderFootPlugin):
         srcModuleName = event.module
         eventData = event.data
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if self.errorState:
             return None
@@ -131,6 +149,9 @@ class sfp_tool_whatweb(SpiderFootPlugin):
             self.sf.error("Couldn't parse the JSON output of WhatWeb: " + str(e), False)
             return None
 
+        if len(result_json) == 0:
+            return None
+
         evt = SpiderFootEvent('RAW_RIR_DATA', str(result_json), self.__name__, event)
         self.notifyListeners(evt)
 
@@ -161,7 +182,7 @@ class sfp_tool_whatweb(SpiderFootPlugin):
             for plugin in plugin_matches:
                 if plugin in blacklist:
                     continue
-                evt = SpiderFootEvent('SOFTWARE_USED', plugin, self.__name__, event)
+                evt = SpiderFootEvent('WEBSERVER_TECHNOLOGY', plugin, self.__name__, event)
                 self.notifyListeners(evt)
 
 # End of sfp_tool_whatweb class

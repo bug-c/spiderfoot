@@ -11,14 +11,44 @@
 # -------------------------------------------------------------------------------
 
 import json
-from datetime import datetime
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime
+
 from netaddr import IPNetwork
-import urllib
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_pulsedive(SpiderFootPlugin):
-    """Pulsedive:Investigate,Passive:Reputation Systems:apikey:Obtain information from Pulsedive's API."""
+
+    meta = {
+        'name': "Pulsedive",
+        'summary': "Obtain information from Pulsedive's API.",
+        'flags': ["apikey"],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Reputation Systems"],
+        'dataSource': {
+            'website': "https://pulsedive.com/",
+            'model': "FREE_AUTH_LIMITED",
+            'references': [
+                "https://pulsedive.com/api/"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://pulsedive.com",
+                "Register a free account",
+                "Navigate to https://pulsedive.com/account",
+                "The API key is listed under 'Your API Key'"
+            ],
+            'favIcon': "https://pulsedive.com/favicon.ico?v=3.9.72",
+            'logo': "https://pulsedive.com/img/logo.svg",
+            'description': "Why check 30 different solutions for varying snippets of data when you can just check one? "
+                                "Pulsedive enriches IOCs but also fetches article summaries from Wikipedia and "
+                                "even posts from Reddit and the infosec blogosphere to provide contextual information for threats.",
+        }
+    }
 
     # Default options
     opts = {
@@ -56,7 +86,7 @@ class sfp_pulsedive(SpiderFootPlugin):
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
@@ -66,18 +96,18 @@ class sfp_pulsedive(SpiderFootPlugin):
 
     # What events this module produces
     def producedEvents(self):
-        return ["MALICIOUS_INTERNET_NAME", "MALICIOUS_IPADDR", 
+        return ["MALICIOUS_INTERNET_NAME", "MALICIOUS_IPADDR",
                 "MALICIOUS_AFFILIATE_IPADDR", "MALICIOUS_NETBLOCK",
                 'TCP_PORT_OPEN']
 
     # https://pulsedive.com/api/
     def query(self, qry):
         params = {
-            'indicator': qry.encode('raw_unicode_escape'),
+            'indicator': qry.encode('raw_unicode_escape').decode("ascii", errors='replace'),
             'key': self.opts['api_key']
         }
 
-        url = 'https://pulsedive.com/api/info.php?' + urllib.urlencode(params)
+        url = 'https://pulsedive.com/api/info.php?' + urllib.parse.urlencode(params)
         res = self.sf.fetchUrl(url, timeout=30, useragent="SpiderFoot")
 
         time.sleep(self.opts['delay'])
@@ -93,8 +123,7 @@ class sfp_pulsedive(SpiderFootPlugin):
         try:
             info = json.loads(res['content'])
         except Exception as e:
-            print(str(res['content']))
-            self.sf.error("Error processing JSON response from Pulsedive.", False)
+            self.sf.error(f"Error processing JSON response from Pulsedive: {e}", False)
             return None
 
         return info
@@ -108,7 +137,7 @@ class sfp_pulsedive(SpiderFootPlugin):
         if self.errorState:
             return None
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if self.opts['api_key'] == "":
             self.sf.error("You enabled sfp_pulsedive but did not set an API key!", False)
@@ -117,7 +146,7 @@ class sfp_pulsedive(SpiderFootPlugin):
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
 
         self.results[eventData] = True
@@ -201,7 +230,7 @@ class sfp_pulsedive(SpiderFootPlugin):
                     if self.opts['age_limit_days'] > 0 and created_ts < age_limit_ts:
                         self.sf.debug("Record found but too old, skipping.")
                         continue
-                except BaseException as e:
+                except BaseException:
                     self.sf.debug("Couldn't parse date from Pulsedive so assuming it's OK.")
                 e = SpiderFootEvent(evtType, descr, self.__name__, event)
                 self.notifyListeners(e)

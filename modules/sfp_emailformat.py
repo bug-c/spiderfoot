@@ -12,12 +12,31 @@
 # -------------------------------------------------------------------------------
 
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
 
 
 class sfp_emailformat(SpiderFootPlugin):
-    """EmailFormat:Footprint,Investigate,Passive:Search Engines::Look up e-mail addresses on email-format.com."""
 
+    meta = {
+        'name': "EmailFormat",
+        'summary': "Look up e-mail addresses on email-format.com.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Search Engines"],
+        'dataSource': {
+            'website': "https://www.email-format.com/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [
+                "https://www.email-format.com/i/api_access/",
+                "https://www.email-format.com/i/api_v2/",
+                "https://www.email-format.com/i/api_v1/"
+            ],
+            'favIcon': "https://www.google.com/s2/favicons?domain=https://www.email-format.com/",
+            'logo': "https://www.google.com/s2/favicons?domain=https://www.email-format.com/",
+            'description': "Save time and energy - find the email address formats in use at thousands of companies.",
+        }
+    }
 
     results = None
 
@@ -31,21 +50,20 @@ class sfp_emailformat(SpiderFootPlugin):
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.__dataSource__ = "Email-Format.com"
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return ["DOMAIN_NAME"]
+        return ['INTERNET_NAME', "DOMAIN_NAME"]
 
     # What events this module produces
     # This is to support the end user in selecting modules based on events
     # produced.
     def producedEvents(self):
-        return ["EMAILADDR"]
+        return ["EMAILADDR", "EMAILADDR_GENERIC"]
 
     # Handle events sent to this module
     def handleEvent(self, event):
@@ -58,43 +76,34 @@ class sfp_emailformat(SpiderFootPlugin):
         else:
             self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Get e-mail addresses on this domain
-        if eventName == "DOMAIN_NAME":
-            res = self.sf.fetchUrl("https://www.email-format.com/d/" + eventData + "/", timeout=self.opts['_fetchtimeout'], useragent=self.opts['_useragent'])
+        res = self.sf.fetchUrl("https://www.email-format.com/d/" + eventData + "/", timeout=self.opts['_fetchtimeout'], useragent=self.opts['_useragent'])
 
         if res['content'] is None:
             return None
 
-        pat = re.compile("([a-zA-Z\.0-9_\-]+@[a-zA-Z\.0-9\-]+\.[a-zA-Z\.0-9\-]+)")
-        matches = re.findall(pat, res['content'])
-        for match in matches:
-            evttype = "EMAILADDR"
-            self.sf.debug("Found possible email: " + match)
-
-            # Handle false positive matches
-            if len(match) < 5:
-                self.sf.debug("Likely invalid address.")
-                continue
-
-            if "..." in match:
-                self.sf.debug("Incomplete e-mail address, skipping.")
-                continue
-
-            # Handle messed up encodings
-            if "%" in match:
-                self.sf.debug("Skipped address: " + match)
-                continue
-
+        emails = self.sf.parseEmails(res['content'])
+        for email in emails:
             # Skip unrelated emails
-            mailDom = match.lower().split('@')[1]
+            mailDom = email.lower().split('@')[1]
             if not self.getTarget().matches(mailDom):
-                self.sf.debug("Skipped address: " + match)
+                self.sf.debug("Skipped address: " + email)
                 continue
 
-            self.sf.info("Found e-mail address: " + match)
-            evt = SpiderFootEvent(evttype, match, self.__name__, event)
+            # Skip masked emails
+            if re.match(r"^[0-9a-f]{8}\.[0-9]{7}@", email):
+                self.sf.debug("Skipped address: " + email)
+                continue
+
+            self.sf.info("Found e-mail address: " + email)
+            if email.split("@")[0] in self.opts['_genericusers'].split(","):
+                evttype = "EMAILADDR_GENERIC"
+            else:
+                evttype = "EMAILADDR"
+
+            evt = SpiderFootEvent(evttype, email, self.__name__, event)
             self.notifyListeners(evt)
 
         return None

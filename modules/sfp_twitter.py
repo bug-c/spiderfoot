@@ -10,13 +10,32 @@
 #-------------------------------------------------------------------------------
 
 import re
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_twitter(SpiderFootPlugin):
-    """Twitter:Footprint,Investigate,Passive:Social Media::Gather name and location from Twitter profiles."""
+
+    meta = {
+        'name': "Twitter",
+        'summary': "Gather name and location from Twitter profiles.",
+        'flags': [""],
+        'useCases': ["Footprint", "Investigate", "Passive"],
+        'categories': ["Social Media"],
+        'dataSource': {
+            'website': "https://twitter.com/",
+            'model': "FREE_NOAUTH_UNLIMITED",
+            'references': [],
+            'favIcon': "https://abs.twimg.com/favicons/twitter.ico",
+            'logo': "https://abs.twimg.com/responsive-web/web/icon-ios.8ea219d4.png",
+            'description': "Twitter is an American microblogging and social networking service "
+                                "on which users post and interact with messages known as \"tweets\". "
+                                "Registered users can post, like, and retweet tweets, but unregistered users can only read them.",
+        }
+    }
 
     # Default options
-    opts = { 
+    opts = {
     }
 
     # Option descriptions
@@ -26,18 +45,18 @@ class sfp_twitter(SpiderFootPlugin):
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
         self.__dataSource__ = "Twitter"
-        self.results = dict()
+        self.results = self.tempStorage()
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return [ "SOCIAL_MEDIA" ]
+        return ["SOCIAL_MEDIA"]
 
     # What events this module produces
     def producedEvents(self):
-        return [ "RAW_RIR_DATA", "GEOINFO" ]
+        return ["RAW_RIR_DATA", "GEOINFO"]
 
     # Handle events sent to this module
     def handleEvent(self, event):
@@ -50,22 +69,21 @@ class sfp_twitter(SpiderFootPlugin):
         else:
             self.results[eventData] = True
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         # Retrieve profile
         try:
             network = eventData.split(": ")[0]
-            url = eventData.split(": ")[1]
+            url = eventData.split(": ")[1].replace("<SFURL>", "").replace("</SFURL>", "")
         except BaseException as e:
-            self.sf.error("Unable to parse SOCIAL_MEDIA: " +
-                          eventData + " (" + str(e) + ")", False)
+            self.sf.error(f"Unable to parse SOCIAL_MEDIA: {eventData} ({e})", False)
             return None
 
         if not network == "Twitter":
             self.sf.debug("Skipping social network profile, " + url + ", as not a Twitter profile")
             return None
 
-        res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'], 
+        res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'],
                                useragent="SpiderFoot")
 
         if res['content'] is None:
@@ -76,11 +94,11 @@ class sfp_twitter(SpiderFootPlugin):
             return None
 
         # Retrieve name
-        human_name = re.findall(r'<div class="fullname">([^<]+)\s*</div>', 
+        human_name = re.findall(r'<div class="fullname">([^<]+)\s*</div>',
                                 res['content'], re.MULTILINE)
 
         if human_name:
-            e = SpiderFootEvent("RAW_RIR_DATA", "Possible full name: " + human_name[0], 
+            e = SpiderFootEvent("RAW_RIR_DATA", "Possible full name: " + human_name[0],
                                 self.__name__, event)
             self.notifyListeners(e)
 

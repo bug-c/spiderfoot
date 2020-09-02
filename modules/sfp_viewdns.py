@@ -11,11 +11,38 @@
 # -------------------------------------------------------------------------------
 
 import json
-import socket
-from sflib import SpiderFoot, SpiderFootPlugin, SpiderFootEvent
+
+from spiderfoot import SpiderFootEvent, SpiderFootPlugin
+
 
 class sfp_viewdns(SpiderFootPlugin):
-    """ViewDNS.info:Investigate,Passive:Search Engines:apikey:Reverse Whois lookups using ViewDNS.info."""
+
+    meta = {
+        'name': "ViewDNS.info",
+        'summary': "Reverse Whois lookups using ViewDNS.info.",
+        'flags': ["apikey"],
+        'useCases': ["Investigate", "Passive"],
+        'categories': ["Search Engines"],
+        'dataSource': {
+            'website': "https://viewdns.info/",
+            'model': "FREE_AUTH_LIMITED",
+            'references': [
+                "https://viewdns.info/api/docs",
+                "https://viewdns.info/api/"
+            ],
+            'apiKeyInstructions': [
+                "Visit https://viewdns.info/api",
+                "Select a plan",
+                "Register an account",
+                "Navigate to https://viewdns.info/api/dashboard/",
+                "The API key is listed under 'API Key'"
+            ],
+            'favIcon': "https://viewdns.info/apple-touch-icon.png",
+            'logo': "https://viewdns.info/images/viewdns_logo.gif",
+            'description': "The ViewDNS.info API allows webmasters to integrate the tools provided by ViewDNS.info "
+                                "into their own sites in a simple and effective manner.",
+        }
+    }
 
     # Default options
     opts = {
@@ -34,47 +61,30 @@ class sfp_viewdns(SpiderFootPlugin):
     # Be sure to completely clear any class variables in setup()
     # or you run the risk of data persisting between scan runs.
 
-    results = dict()
+    results = None
     errorState = False
     accum = list()
     cohostcount = 0
 
     def setup(self, sfc, userOpts=dict()):
         self.sf = sfc
-        self.results = dict()
+        self.results = self.tempStorage()
         self.accum = list()
         self.cohostcount = 0
 
         # Clear / reset any other class member variables here
         # or you risk them persisting between threads.
 
-        for opt in userOpts.keys():
+        for opt in list(userOpts.keys()):
             self.opts[opt] = userOpts[opt]
 
     # What events is this module interested in for input
     def watchedEvents(self):
-        return ["EMAILADDR", "HUMAN_NAME", "IP_ADDRESS", "PROVIDER_DNS"]
+        return ["EMAILADDR", "IP_ADDRESS", "PROVIDER_DNS"]
 
     # What events this module produces
     def producedEvents(self):
-        return ["AFFILIATE_DOMAIN", "CO_HOSTED_SITE"]
-
-    def validateIP(self, host, ip):
-        try:
-            addrs = socket.gethostbyname_ex(host)
-        except BaseException as e:
-            self.sf.debug("Unable to resolve " + host + ": " + str(e))
-            return False
-
-        for addr in addrs:
-            if type(addr) == list:
-                for a in addr:
-                    if str(a) == ip:
-                        return True
-            else:
-                if str(addr) == ip:
-                    return True
-        return False
+        return ['AFFILIATE_INTERNET_NAME', 'AFFILIATE_DOMAIN_NAME', 'CO_HOSTED_SITE']
 
     # Search ViewDNS.info
     def query(self, qry, querytype, page=1):
@@ -96,10 +106,10 @@ class sfp_viewdns(SpiderFootPlugin):
         url = "https://api.viewdns.info/" + querytype + "/?apikey=" + self.opts['api_key']
         url += "&" + attr + "=" + qry + "&page=" + str(page) + "&output=json"
 
-        res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'], 
+        res = self.sf.fetchUrl(url, timeout=self.opts['_fetchtimeout'],
                                useragent="SpiderFoot")
 
-        if res['code'] in [ "400", "429", "500", "403" ]:
+        if res['code'] in ["400", "429", "500", "403"]:
             self.sf.error("ViewDNS.info API key seems to have been rejected or you have exceeded usage limits.", False)
             self.errorState = True
             return None
@@ -127,7 +137,7 @@ class sfp_viewdns(SpiderFootPlugin):
                 # We are at the last or only page
                 self.accum.extend(r.get(responsekey, []))
         except Exception as e:
-            self.sf.error("Error processing JSON response from ViewDNS.info: " + str(e), False)
+            self.sf.error(f"Error processing JSON response from ViewDNS.info: {e}", False)
             return None
 
     # Handle events sent to this module
@@ -139,7 +149,7 @@ class sfp_viewdns(SpiderFootPlugin):
         if self.errorState:
             return None
 
-        self.sf.debug("Received event, " + eventName + ", from " + srcModuleName)
+        self.sf.debug(f"Received event, {eventName}, from {srcModuleName}")
 
         if self.opts['api_key'] == "":
             self.sf.error("You enabled sfp_viewdns but did not set an API key!", False)
@@ -148,13 +158,13 @@ class sfp_viewdns(SpiderFootPlugin):
 
         # Don't look up stuff twice
         if eventData in self.results:
-            self.sf.debug("Skipping " + eventData + " as already mapped.")
+            self.sf.debug(f"Skipping {eventData}, already checked.")
             return None
         else:
             self.results[eventData] = True
 
         valkey = ""
-        if eventName in [ "HUMAN_NAME", "EMAILADDR" ]:
+        if eventName == "EMAILADDR":
             ident = "reversewhois"
             valkey = "domain"
         if eventName == "IP_ADDRESS":
@@ -171,6 +181,11 @@ class sfp_viewdns(SpiderFootPlugin):
         self.accum = list()
         self.query(eventData, ident)
         rec = self.accum
+
+        # Leave out registrar parking sites, and other highly used IPs
+        if eventName == "IP_ADDRESS" and len(rec) > self.opts['maxcohost']:
+            return None
+
         myres = list()
         if rec is not None:
             for r in rec:
@@ -182,16 +197,20 @@ class sfp_viewdns(SpiderFootPlugin):
                         myres.append(h.lower())
                     else:
                         continue
-                    if h.lower() in [ "demo1.com", "demo2.com", "demo3.com", "demo4.com", "demo5.com" ]:
+                    if h.lower() in ["demo1.com", "demo2.com", "demo3.com", "demo4.com", "demo5.com"]:
                         continue
-                    if eventName in [ "HUMAN_NAME", "EMAILADDR" ]:
-                        e = SpiderFootEvent("AFFILIATE_DOMAIN", h, self.__name__, event)
+                    if eventName == "EMAILADDR":
+                        e = SpiderFootEvent("AFFILIATE_INTERNET_NAME", h, self.__name__, event)
+
+                        if self.sf.isDomain(h, self.opts['_internettlds']):
+                            evt = SpiderFootEvent('AFFILIATE_DOMAIN_NAME', h, self.__name__, event)
+                            self.notifyListeners(evt)
                     else:
                         if self.cohostcount >= self.opts['maxcohost']:
                             continue
                         self.cohostcount += 1
                         if eventName == "IP_ADDRESS" and self.opts['verify']:
-                            if not self.validateIP(h, eventData):
+                            if not self.sf.validateIP(h, eventData):
                                 self.sf.debug("Host no longer resolves to our IP.")
                                 continue
                         e = SpiderFootEvent("CO_HOSTED_SITE", h, self.__name__, event)
